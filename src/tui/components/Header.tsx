@@ -12,6 +12,7 @@ export function Header({ name, viewMode }: HeaderProps) {
     { key: "2", label: "Agents", mode: "agents" },
     { key: "3", label: "Models", mode: "models" },
     { key: "4", label: "Tasks", mode: "tasks" },
+    { key: "5", label: "Costs", mode: "costs" },
   ];
 
   return (

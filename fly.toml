@@ -1,0 +1,30 @@
+# Fly.io deployment configuration for Foreman
+
+app = "foreman"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  NODE_ENV = "production"
+  LOG_LEVEL = "info"
+
+# Foreman doesn't serve HTTP but Fly needs a health check
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 1
+
+[[vm]]
+  memory = "2gb"
+  cpu_kind = "shared"
+  cpus = 2
+
+# Secrets (set via `fly secrets set`):
+# ANTHROPIC_API_KEY
+# LINEAR_API_KEY
+# GITHUB_TOKEN
+# SLACK_BOT_TOKEN

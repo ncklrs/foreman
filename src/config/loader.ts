@@ -5,7 +5,7 @@
 import { readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
-import type { ForemanConfig, ModelConfig, PolicyConfig, RoutingConfig, SandboxConfig } from "../types/index.js";
+import type { ForemanConfig, GitHubIntegrationConfig, ModelConfig, PolicyConfig, RoutingConfig, SandboxConfig, SlackIntegrationConfig } from "../types/index.js";
 
 // We parse TOML manually to avoid runtime dependency issues.
 // For a production build we'd use @iarna/toml, but this parser handles
@@ -43,6 +43,8 @@ function findConfigFile(): string | null {
 function normalizeConfig(raw: Record<string, unknown>): ForemanConfig {
   const foreman = raw.foreman as Record<string, unknown> | undefined;
   const linear = raw.linear as Record<string, unknown> | undefined;
+  const github = raw.github as Record<string, unknown> | undefined;
+  const slack = raw.slack as Record<string, unknown> | undefined;
   const models = raw.models as Record<string, Record<string, unknown>> | undefined;
   const routing = raw.routing as Record<string, unknown> | undefined;
   const sandbox = raw.sandbox as Record<string, unknown> | undefined;
@@ -62,10 +64,33 @@ function normalizeConfig(raw: Record<string, unknown>): ForemanConfig {
           watchStatus: String(linear.watch_status ?? "Todo"),
         }
       : undefined,
+    github: normalizeGitHub(github),
+    slack: normalizeSlack(slack),
     models: normalizeModels(models ?? {}),
     routing: normalizeRouting(routing),
     sandbox: normalizeSandbox(sandbox),
     policy: normalizePolicy(policy),
+  };
+}
+
+function normalizeGitHub(raw?: Record<string, unknown>): GitHubIntegrationConfig | undefined {
+  if (!raw) return undefined;
+  return {
+    token: resolveValue(String(raw.token ?? "")),
+    owner: String(raw.owner ?? ""),
+    repo: String(raw.repo ?? ""),
+    watchLabels: (raw.watch_labels as string[]) ?? [],
+    watchState: (raw.watch_state as "open" | "closed" | "all") ?? "open",
+  };
+}
+
+function normalizeSlack(raw?: Record<string, unknown>): SlackIntegrationConfig | undefined {
+  if (!raw) return undefined;
+  return {
+    botToken: resolveValue(String(raw.bot_token ?? "")),
+    watchChannels: (raw.watch_channels as string[]) ?? [],
+    triggerPrefix: raw.trigger_prefix ? String(raw.trigger_prefix) : "!agent",
+    postProgress: raw.post_progress !== false,
   };
 }
 

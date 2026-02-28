@@ -144,7 +144,7 @@ async function main(): Promise<void> {
 
   if (args.noTui) {
     // Non-TUI mode: just log events
-    orchestrator.onEvent((event) => {
+    orchestrator.getEventBus().onAny((event) => {
       switch (event.type) {
         case "agent:started":
           console.log(`[agent] Started: ${event.session.task.title}`);

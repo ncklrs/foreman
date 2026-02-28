@@ -47,6 +47,7 @@ export { ToolExecutor } from "./tools/executor.js";
 
 // Router
 export { ModelRouter } from "./router/router.js";
+export { PerformanceTracker } from "./router/performance.js";
 
 // Policy
 export { PolicyEngine } from "./policy/engine.js";
@@ -64,6 +65,12 @@ export { SlackClient, SlackWatcher } from "./integrations/slack.js";
 
 // Events
 export { EventBus } from "./events/bus.js";
+
+// Logging
+export { Logger } from "./logging/logger.js";
+
+// Storage
+export { SessionStore } from "./storage/sessions.js";
 
 // Config
 export { loadConfig } from "./config/loader.js";

@@ -3,29 +3,72 @@
  * Built with Ink (React for CLI).
  */
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect } from "react";
 import { Box, Text, useInput, useApp } from "ink";
-import type { AgentSession, ForemanConfig, ForemanEvent, ProviderHealth } from "../types/index.js";
+import type { AgentSession, ForemanConfig, ForemanEvent, PolicyEvaluation, ProviderHealth } from "../types/index.js";
+import type { ModelStats } from "../router/performance.js";
 import { Header } from "./components/Header.js";
 import { ModelRegistry } from "./components/ModelRegistry.js";
 import { TaskQueue } from "./components/TaskQueue.js";
 import { AgentStream } from "./components/AgentStream.js";
 import { StatusBar } from "./components/StatusBar.js";
+import { ApprovalPrompt } from "./components/ApprovalPrompt.js";
+import type { PendingApproval } from "./components/ApprovalPrompt.js";
+import { CostDashboard } from "./components/CostDashboard.js";
+import { AgentDetail } from "./components/AgentDetail.js";
 
-type ViewMode = "dashboard" | "agents" | "models" | "tasks";
+type ViewMode = "dashboard" | "agents" | "models" | "tasks" | "costs";
 
 interface AppProps {
   config: ForemanConfig;
   events: ForemanEvent[];
   sessions: AgentSession[];
   providerHealth: Map<string, ProviderHealth>;
+  performanceStats?: Record<string, ModelStats>;
+  modelCosts?: Record<string, { inputPer1M: number; outputPer1M: number }>;
+  onApproval?: (handler: (evaluation: PolicyEvaluation, session: AgentSession) => Promise<boolean>) => void;
 }
 
-export function App({ config, events, sessions, providerHealth }: AppProps) {
+export function App({
+  config,
+  events,
+  sessions,
+  providerHealth,
+  performanceStats = {},
+  modelCosts = {},
+  onApproval,
+}: AppProps) {
   const { exit } = useApp();
   const [viewMode, setViewMode] = useState<ViewMode>("dashboard");
-  const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
   const [streamOutput, setStreamOutput] = useState<string[]>([]);
+  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
+  const [pendingApproval, setPendingApproval] = useState<PendingApproval | null>(null);
+
+  // Register approval handler with orchestrator
+  useEffect(() => {
+    if (!onApproval) return;
+    onApproval(async (evaluation, session) => {
+      return new Promise<boolean>((resolve) => {
+        setPendingApproval({ evaluation, session, resolve });
+      });
+    });
+  }, [onApproval]);
+
+  // Clear pending approval after resolve
+  useEffect(() => {
+    if (!pendingApproval) return;
+    const origResolve = pendingApproval.resolve;
+    const wrappedPending: PendingApproval = {
+      ...pendingApproval,
+      resolve: (approved: boolean) => {
+        origResolve(approved);
+        setPendingApproval(null);
+      },
+    };
+    setPendingApproval(wrappedPending);
+    // Only run once when a new approval comes in
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingApproval?.evaluation]);
 
   // Process events for stream output
   useEffect(() => {
@@ -48,6 +91,9 @@ export function App({ config, events, sessions, providerHealth }: AppProps) {
 
   // Keyboard shortcuts
   useInput((input, key) => {
+    // If approval prompt is showing, don't intercept other keys
+    if (pendingApproval) return;
+
     if (input === "q" || (key.ctrl && input === "c")) {
       exit();
     }
@@ -55,8 +101,12 @@ export function App({ config, events, sessions, providerHealth }: AppProps) {
     if (input === "2") setViewMode("agents");
     if (input === "3") setViewMode("models");
     if (input === "4") setViewMode("tasks");
+    if (input === "5") setViewMode("costs");
+    if (key.escape && selectedAgentId) {
+      setSelectedAgentId(null);
+    }
     if (key.tab) {
-      const modes: ViewMode[] = ["dashboard", "agents", "models", "tasks"];
+      const modes: ViewMode[] = ["dashboard", "agents", "models", "tasks", "costs"];
       const idx = modes.indexOf(viewMode);
       setViewMode(modes[(idx + 1) % modes.length]);
     }
@@ -74,12 +124,19 @@ export function App({ config, events, sessions, providerHealth }: AppProps) {
     { input: 0, output: 0 }
   );
 
+  const selectedSession = selectedAgentId
+    ? sessions.find((s) => s.id === selectedAgentId) ?? null
+    : null;
+
   return (
     <Box flexDirection="column" width="100%">
       <Header
         name={config.foreman.name}
         viewMode={viewMode}
       />
+
+      {/* Approval overlay */}
+      {pendingApproval && <ApprovalPrompt pending={pendingApproval} />}
 
       <Box flexDirection="column" flexGrow={1} paddingX={1}>
         {viewMode === "dashboard" && (
@@ -92,10 +149,17 @@ export function App({ config, events, sessions, providerHealth }: AppProps) {
           />
         )}
 
-        {viewMode === "agents" && (
+        {viewMode === "agents" && !selectedAgentId && (
           <AgentStream
             sessions={sessions}
             streamOutput={streamOutput}
+          />
+        )}
+
+        {viewMode === "agents" && selectedAgentId && (
+          <AgentDetail
+            session={selectedSession}
+            onBack={() => setSelectedAgentId(null)}
           />
         )}
 
@@ -108,6 +172,14 @@ export function App({ config, events, sessions, providerHealth }: AppProps) {
 
         {viewMode === "tasks" && (
           <TaskQueue sessions={sessions} />
+        )}
+
+        {viewMode === "costs" && (
+          <CostDashboard
+            sessions={sessions}
+            performanceStats={performanceStats}
+            modelCosts={modelCosts}
+          />
         )}
       </Box>
 
