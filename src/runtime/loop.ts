@@ -37,6 +37,7 @@ import { ContextManager } from "./context.js";
 import { RecoveryManager } from "./recovery.js";
 import { ToolResultCache } from "./cache.js";
 import { SubAgentSpawner } from "./subagent.js";
+import { generateId } from "../utils/id.js";
 
 interface AgentLoopOptions {
   task: AgentTask;
@@ -111,7 +112,7 @@ export class AgentLoop extends EventEmitter {
     this.toolCache = new ToolResultCache();
 
     this.session = {
-      id: generateId(),
+      id: generateId("agent"),
       task: options.task,
       status: "idle",
       modelName: options.provider.modelId,
@@ -627,6 +628,4 @@ export class AgentLoop extends EventEmitter {
   }
 }
 
-function generateId(): string {
-  return `agent_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-}
+// generateId imported from ../utils/id.js

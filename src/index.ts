@@ -7,23 +7,38 @@
 // Core types
 export type {
   ForemanConfig,
+  ForemanGlobalConfig,
   ModelConfig,
   AgentTask,
   AgentSession,
+  AgentStatus,
+  AgentArtifact,
   ChatMessage,
+  ChatRequest,
   ChatResponse,
+  ContentBlock,
+  TextBlock,
+  ToolUseBlock,
+  ToolResultBlock,
   StreamEvent,
   ToolDefinition,
+  ToolExecutionResult,
+  TokenUsage,
   ModelCapabilities,
   CostProfile,
   ProviderHealth,
   PolicyDecision,
   PolicyEvaluation,
+  PolicyConfig,
   RoutingDecision,
+  RoutingConfig,
   TaskComplexity,
   ForemanEvent,
   GitHubIntegrationConfig,
   SlackIntegrationConfig,
+  LinearConfig,
+  SandboxConfig,
+  CloudSandboxConfig,
   AutopilotConfig,
   AutopilotScanner,
   ReviewFinding,
@@ -83,6 +98,7 @@ export { SecretsManager } from "./secrets/manager.js";
 
 // Utils
 export { withRetry } from "./utils/retry.js";
+export { generateId } from "./utils/id.js";
 
 // Config
 export { loadConfig } from "./config/loader.js";
@@ -121,6 +137,7 @@ export type {
   StopPayload,
   TaskCompletedPayload,
   SessionStartPayload,
+  NotificationPayload,
 } from "./hooks/types.js";
 export {
   generateHooksConfig,

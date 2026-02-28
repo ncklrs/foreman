@@ -9,6 +9,20 @@ import type { HandlerMap, RouteResult } from "./router.js";
 import type { HookHandler } from "../hooks/handler.js";
 import type { HookPayload } from "../hooks/types.js";
 import { pathToEvent } from "../hooks/config.js";
+import { generateId } from "../utils/id.js";
+
+/** Compute session status counts from a list of sessions. */
+function getSessionCounts(sessions: Array<{ status: string }>) {
+  let completed = 0;
+  let failed = 0;
+  let running = 0;
+  for (const s of sessions) {
+    if (s.status === "completed") completed++;
+    else if (s.status === "failed") failed++;
+    else if (s.status === "running") running++;
+  }
+  return { completed, failed, running };
+}
 
 export function buildHandlers(orchestrator: Orchestrator, logger: Logger): HandlerMap {
   return {
@@ -86,7 +100,7 @@ export function buildHandlers(orchestrator: Orchestrator, logger: Logger): Handl
       }
 
       const task = {
-        id: `api_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        id: generateId("api"),
         title: String(data.title),
         description: String(data.description ?? data.title),
         repository: data.repository ? String(data.repository) : undefined,
@@ -153,14 +167,12 @@ export function buildHandlers(orchestrator: Orchestrator, logger: Logger): Handl
         0
       );
 
-      const completed = sessions.filter((s) => s.status === "completed").length;
-      const failed = sessions.filter((s) => s.status === "failed").length;
-      const running = sessions.filter((s) => s.status === "running").length;
+      const counts = getSessionCounts(sessions);
 
       return {
         status: 200,
         body: {
-          sessions: { total: sessions.length, completed, failed, running },
+          sessions: { total: sessions.length, ...counts },
           tokens: { total: totalTokens },
           models: stats,
           uptime: process.uptime(),
@@ -176,9 +188,7 @@ export function buildHandlers(orchestrator: Orchestrator, logger: Logger): Handl
         0
       );
 
-      const completed = sessions.filter((s) => s.status === "completed").length;
-      const failed = sessions.filter((s) => s.status === "failed").length;
-      const running = sessions.filter((s) => s.status === "running").length;
+      const { completed, failed, running } = getSessionCounts(sessions);
 
       const lines = [
         "# HELP foreman_sessions_total Total number of agent sessions",

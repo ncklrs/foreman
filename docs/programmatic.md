@@ -171,8 +171,8 @@ import { EventBus } from "foreman";
 const bus = new EventBus({ historySize: 500 });
 
 // Subscribe to specific events
-bus.on("task:completed", (event) => {
-  console.log(`Task done: ${event.task.title}`);
+bus.on("agent:completed", (event) => {
+  console.log(`Agent done: ${event.session.task.title}`);
 });
 
 // Subscribe to all events
@@ -181,10 +181,10 @@ bus.onAny((event) => {
 });
 
 // Wait for a specific event
-const completedEvent = await bus.waitFor("task:completed", 60_000);
+const completedEvent = await bus.waitFor("agent:completed", 60_000);
 
 // Get event history
-const recentTasks = bus.getHistory("task:completed");
+const recentTasks = bus.getHistory("agent:completed");
 ```
 
 ### Learning System

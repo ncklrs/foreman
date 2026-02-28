@@ -83,6 +83,9 @@ export class HookHandler {
       Bash: "run_command",
       Write: "write_file",
       Edit: "edit_file",
+      Read: "read_file",
+      Glob: "list_files",
+      Grep: "search_codebase",
     };
 
     const foremanToolName = toolMapping[payload.tool_name] ?? payload.tool_name;

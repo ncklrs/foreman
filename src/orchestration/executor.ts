@@ -76,6 +76,7 @@ export class MultiAgentExecutor {
   private options: ExecutorOptions;
   private activeAgents: Map<string, AgentLoop> = new Map();
   private aborted = false;
+  private waitResolvers: Array<() => void> = [];
 
   constructor(options: ExecutorOptions) {
     this.options = {
@@ -299,6 +300,7 @@ export class MultiAgentExecutor {
       return result;
     } finally {
       this.activeAgents.delete(subtask.id);
+      this.notifyWaiters();
     }
   }
 
@@ -326,14 +328,20 @@ export class MultiAgentExecutor {
 
   /** Wait for any active agent to complete. */
   private waitForAny(): Promise<void> {
+    if (this.activeAgents.size === 0 || this.aborted) {
+      return Promise.resolve();
+    }
     return new Promise((resolve) => {
-      const check = setInterval(() => {
-        if (this.activeAgents.size === 0 || this.aborted) {
-          clearInterval(check);
-          resolve();
-        }
-      }, 100);
+      this.waitResolvers.push(resolve);
     });
+  }
+
+  /** Notify waiters that an agent slot has freed up. */
+  private notifyWaiters(): void {
+    const resolvers = this.waitResolvers.splice(0);
+    for (const resolve of resolvers) {
+      resolve();
+    }
   }
 
   private extractFilesChanged(session: {

@@ -17,6 +17,7 @@ import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import type { AgentSession, ReviewFinding } from "../types/index.js";
+import { generateId } from "../utils/id.js";
 
 export interface Lesson {
   id: string;
@@ -209,7 +210,7 @@ export class KnowledgeStore {
       if (opts.resolution) existing.resolution = opts.resolution;
     } else {
       this.kb.failurePatterns.push({
-        id: `fail_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        id: generateId("fail"),
         pattern: opts.pattern,
         approach: opts.approach,
         resolution: opts.resolution,
@@ -344,7 +345,7 @@ export class KnowledgeStore {
       existing.lastReinforcedAt = new Date().toISOString();
     } else {
       this.kb.lessons.push({
-        id: `lesson_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        id: generateId("lesson"),
         type: opts.type,
         summary: opts.summary,
         detail: opts.detail,

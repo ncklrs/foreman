@@ -30,56 +30,46 @@ Foreman uses a type-safe event bus for real-time communication between component
 
 ## Event Types
 
+### Agent Events
+
+| Event | Data | When |
+|-------|------|------|
+| `agent:started` | `{ session }` | Agent begins work on a task |
+| `agent:iteration` | `{ session, iteration }` | Each loop iteration |
+| `agent:stream` | `{ sessionId, event: StreamEvent }` | Streaming text/tool output |
+| `agent:tool_call` | `{ sessionId, toolName, input }` | Tool is about to execute |
+| `agent:tool_result` | `{ sessionId, toolName, result: ToolExecutionResult }` | Tool returned result |
+| `agent:completed` | `{ session }` | Agent finished successfully |
+| `agent:failed` | `{ session, error }` | Agent failed |
+| `agent:approval_required` | `{ session, evaluation: PolicyEvaluation }` | Tool call needs approval |
+
 ### Task Events
 
 | Event | Data | When |
 |-------|------|------|
 | `task:queued` | `{ task }` | Task added to queue |
-| `task:started` | `{ task, modelKey, sessionId }` | Agent begins work |
-| `task:completed` | `{ task, session, durationMs }` | Task finished successfully |
-| `task:failed` | `{ task, error, session }` | Task failed |
+| `task:assigned` | `{ task, modelKey }` | Task assigned to a model |
 | `task:decomposed` | `{ task, subtaskCount, strategy }` | Task split into subtasks |
 | `task:subtask_started` | `{ parentTaskId, subtaskId, title }` | Subtask agent begins |
 | `task:subtask_completed` | `{ parentTaskId, subtaskId, title, success }` | Subtask agent finishes |
 | `task:graph_completed` | `{ parentTaskId, completed, failed, skipped }` | All subtasks done |
 
-### Agent Events
+### Provider Events
 
 | Event | Data | When |
 |-------|------|------|
-| `agent:iteration` | `{ sessionId, iteration, tokenUsage }` | Each loop iteration |
-| `agent:tool_called` | `{ sessionId, tool, input, durationMs }` | Tool executed |
-| `agent:tool_result` | `{ sessionId, tool, output, cached }` | Tool returned result |
-| `agent:error` | `{ sessionId, error, recoverable }` | Error in agent loop |
-| `agent:recovery` | `{ sessionId, type, message }` | Recovery action taken |
-| `agent:context_summarized` | `{ sessionId, tokensBefore, tokensAfter }` | Context compressed |
-| `agent:streaming` | `{ sessionId, text }` | Streaming text output |
+| `provider:health_changed` | `{ providerName, health: ProviderHealth }` | Provider health status changed |
 
 ### Autopilot Events
 
 | Event | Data | When |
 |-------|------|------|
-| `autopilot:scan_started` | `{ scanners, runId }` | Scan begins |
-| `autopilot:scan_completed` | `{ findings, runId }` | Scan finished |
-| `autopilot:ticket_created` | `{ title, target, url }` | Ticket created |
-| `autopilot:resolve_started` | `{ finding, runId }` | Auto-fix began |
-| `autopilot:resolve_completed` | `{ finding, success, runId }` | Auto-fix finished |
-| `autopilot:run_completed` | `{ stats, runId }` | Entire run done |
-
-### Integration Events
-
-| Event | Data | When |
-|-------|------|------|
-| `integration:task_received` | `{ source, task }` | New task from watcher |
-| `integration:update_posted` | `{ source, target, message }` | Progress update sent |
-
-### System Events
-
-| Event | Data | When |
-|-------|------|------|
-| `system:started` | `{ config }` | Foreman booted |
-| `system:shutdown` | `{ reason }` | Graceful shutdown |
-| `system:error` | `{ error }` | Unrecoverable error |
+| `autopilot:run_started` | `{ run: AutopilotRun }` | Autopilot run begins |
+| `autopilot:scan_complete` | `{ run, findingsCount }` | Scan finished |
+| `autopilot:ticket_created` | `{ run, finding, ticketId }` | Ticket created from finding |
+| `autopilot:resolve_started` | `{ run, finding }` | Auto-fix began |
+| `autopilot:resolve_completed` | `{ run, finding, success }` | Auto-fix finished |
+| `autopilot:run_completed` | `{ run }` | Entire run done |
 
 ## EventBus API
 
@@ -91,10 +81,8 @@ import { EventBus } from "foreman";
 const bus = new EventBus();
 
 bus.emit({
-  type: "task:started",
-  task: myTask,
-  modelKey: "coder",
-  sessionId: "session-abc",
+  type: "agent:started",
+  session: mySession,
 });
 ```
 
@@ -103,8 +91,8 @@ bus.emit({
 #### Type-Specific Listener
 
 ```typescript
-bus.on("task:completed", (event) => {
-  console.log(`Task ${event.task.title} completed in ${event.durationMs}ms`);
+bus.on("agent:completed", (event) => {
+  console.log(`Agent completed: ${event.session.task.title}`);
 });
 ```
 
@@ -120,13 +108,13 @@ bus.onAny((event) => {
 
 ```typescript
 // Wait for the next event of a specific type
-const event = await bus.waitFor("task:completed", 30_000); // 30s timeout
+const event = await bus.waitFor("agent:completed", 30_000); // 30s timeout
 ```
 
 ### Unsubscribing
 
 ```typescript
-const unsubscribe = bus.on("task:started", handler);
+const unsubscribe = bus.on("agent:started", handler);
 
 // Later:
 unsubscribe();
@@ -143,7 +131,7 @@ const bus = new EventBus({ historySize: 1000 }); // Default: 1000
 const allEvents = bus.getHistory();
 
 // Filter by type
-const taskEvents = bus.getHistory("task:completed");
+const taskEvents = bus.getHistory("agent:completed");
 
 // Filter by time
 const recentEvents = bus.getHistorySince(new Date("2025-01-15T10:00:00Z"));
@@ -164,7 +152,7 @@ bus.resume();
 ### Listener Count
 
 ```typescript
-bus.listenerCount("task:completed"); // 3
+bus.listenerCount("agent:completed"); // 3
 bus.listenerCount();                 // total across all types
 ```
 
@@ -185,9 +173,9 @@ The terminal UI subscribes to events for real-time display:
 
 ```
 EventBus ──emit──→ TUI ──render──→ Terminal
-                   • task:started   → "Starting: Fix login bug"
-                   • agent:streaming → Live text output
-                   • task:completed  → "Done (42s, 15 iterations)"
+                   • agent:started   → "Starting: Fix login bug"
+                   • agent:stream    → Live text output
+                   • agent:completed → "Done (42s, 15 iterations)"
 ```
 
 ### Logging
@@ -196,9 +184,9 @@ The logger subscribes to events for structured output:
 
 ```
 EventBus ──emit──→ Logger ──write──→ stdout / file
-                   [INFO]  task:started  Fix login bug (model: coder)
-                   [DEBUG] agent:tool_called read_file src/app.ts
-                   [INFO]  task:completed Fix login bug (42s)
+                   [INFO]  agent:started  Fix login bug (model: coder)
+                   [DEBUG] agent:tool_call read_file src/app.ts
+                   [INFO]  agent:completed Fix login bug (42s)
 ```
 
 ### API Event History
@@ -207,7 +195,7 @@ The [REST API](api.md) exposes event history via `GET /api/events`:
 
 ```
 EventBus ──emit──→ History Buffer ──query──→ GET /api/events
-                   (ring buffer,              ?type=task:completed
+                   (ring buffer,              ?type=agent:completed
                     last 1000 events)         &limit=50
 ```
 
@@ -215,11 +203,22 @@ EventBus ──emit──→ History Buffer ──query──→ GET /api/events
 
 ```typescript
 type ForemanEvent =
+  // Agent lifecycle
+  | { type: "agent:started"; session: AgentSession }
+  | { type: "agent:iteration"; session: AgentSession; iteration: number }
+  | { type: "agent:stream"; sessionId: string; event: StreamEvent }
+  | { type: "agent:tool_call"; sessionId: string; toolName: string; input: Record<string, unknown> }
+  | { type: "agent:tool_result"; sessionId: string; toolName: string; result: ToolExecutionResult }
+  | { type: "agent:completed"; session: AgentSession }
+  | { type: "agent:failed"; session: AgentSession; error: string }
+  | { type: "agent:approval_required"; session: AgentSession; evaluation: PolicyEvaluation }
+
+  // Provider health
+  | { type: "provider:health_changed"; providerName: string; health: ProviderHealth }
+
   // Task lifecycle
   | { type: "task:queued"; task: AgentTask }
-  | { type: "task:started"; task: AgentTask; modelKey: string; sessionId: string }
-  | { type: "task:completed"; task: AgentTask; session: AgentSession; durationMs: number }
-  | { type: "task:failed"; task: AgentTask; error: string; session?: AgentSession }
+  | { type: "task:assigned"; task: AgentTask; modelKey: string }
 
   // Decomposition
   | { type: "task:decomposed"; task: AgentTask; subtaskCount: number; strategy: string }
@@ -227,29 +226,11 @@ type ForemanEvent =
   | { type: "task:subtask_completed"; parentTaskId: string; subtaskId: string; title: string; success: boolean }
   | { type: "task:graph_completed"; parentTaskId: string; completed: number; failed: number; skipped: number }
 
-  // Agent internals
-  | { type: "agent:iteration"; sessionId: string; iteration: number; tokenUsage: TokenUsage }
-  | { type: "agent:tool_called"; sessionId: string; tool: string; input: unknown; durationMs: number }
-  | { type: "agent:tool_result"; sessionId: string; tool: string; output: string; cached: boolean }
-  | { type: "agent:error"; sessionId: string; error: string; recoverable: boolean }
-  | { type: "agent:recovery"; sessionId: string; type: string; message: string }
-  | { type: "agent:context_summarized"; sessionId: string; tokensBefore: number; tokensAfter: number }
-  | { type: "agent:streaming"; sessionId: string; text: string }
-
   // Autopilot
-  | { type: "autopilot:scan_started"; scanners: string[]; runId: string }
-  | { type: "autopilot:scan_completed"; findings: ReviewFinding[]; runId: string }
-  | { type: "autopilot:ticket_created"; title: string; target: string; url?: string }
-  | { type: "autopilot:resolve_started"; finding: ReviewFinding; runId: string }
-  | { type: "autopilot:resolve_completed"; finding: ReviewFinding; success: boolean; runId: string }
-  | { type: "autopilot:run_completed"; stats: AutopilotRunStats; runId: string }
-
-  // Integrations
-  | { type: "integration:task_received"; source: string; task: AgentTask }
-  | { type: "integration:update_posted"; source: string; target: string; message: string }
-
-  // System
-  | { type: "system:started"; config: ForemanConfig }
-  | { type: "system:shutdown"; reason: string }
-  | { type: "system:error"; error: string };
+  | { type: "autopilot:run_started"; run: AutopilotRun }
+  | { type: "autopilot:scan_complete"; run: AutopilotRun; findingsCount: number }
+  | { type: "autopilot:ticket_created"; run: AutopilotRun; finding: ReviewFinding; ticketId: string }
+  | { type: "autopilot:resolve_started"; run: AutopilotRun; finding: ReviewFinding }
+  | { type: "autopilot:resolve_completed"; run: AutopilotRun; finding: ReviewFinding; success: boolean }
+  | { type: "autopilot:run_completed"; run: AutopilotRun };
 ```
