@@ -8,6 +8,10 @@
 import { loadConfig } from "./config/loader.js";
 import { Orchestrator } from "./orchestrator.js";
 import { ApiServer } from "./api/server.js";
+import { HookHandler } from "./hooks/handler.js";
+import { writeHooksConfig, printHooksConfig, type HooksSetupOptions } from "./hooks/config.js";
+import { DEFAULT_HOOKS_CONFIG } from "./hooks/types.js";
+import { PolicyEngine } from "./policy/engine.js";
 import type { ForemanConfig, ForemanEvent, AgentSession, PolicyEvaluation } from "./types/index.js";
 
 interface CliArgs {
@@ -23,6 +27,9 @@ interface CliArgs {
   api?: boolean;
   apiPort?: number;
   runtime?: string;
+  hooks?: boolean;
+  hooksSetup?: boolean;
+  hooksPrint?: boolean;
   help?: boolean;
 }
 
@@ -75,6 +82,15 @@ function parseArgs(argv: string[]): CliArgs {
       case "--runtime":
         args.runtime = argv[++i];
         break;
+      case "--hooks":
+        args.hooks = true;
+        break;
+      case "--hooks-setup":
+        args.hooksSetup = true;
+        break;
+      case "--hooks-print":
+        args.hooksPrint = true;
+        break;
       case "--help":
       case "-h":
         args.help = true;
@@ -112,6 +128,9 @@ OPTIONS
       --api                  Enable HTTP API server
       --api-port <port>      API server port (default: 4820)
       --runtime <type>       Agent runtime: "foreman" (default) or "claude-code"
+      --hooks                Enable Claude Code hooks server (starts API with hook endpoints)
+      --hooks-setup          Write Claude Code hooks config to .claude/settings.json
+      --hooks-print          Print Claude Code hooks config to stdout
   -h, --help                 Show this help message
 
 EXAMPLES
@@ -121,6 +140,9 @@ EXAMPLES
   foreman --autopilot
   foreman --autopilot-once --no-tui
   foreman --config ./custom-foreman.toml --watch
+  foreman --hooks --api                     # Sidecar mode: hooks + API
+  foreman --hooks-setup                     # Auto-configure Claude Code hooks
+  foreman --hooks-print                     # Print hooks config
 
 CONFIGURATION
   Foreman looks for configuration in:
@@ -138,13 +160,44 @@ async function main(): Promise<void> {
     process.exit(0);
   }
 
+  // Handle hooks-print/hooks-setup before loading full config
+  if (args.hooksPrint || args.hooksSetup) {
+    let hookConfig: ForemanConfig;
+    try {
+      hookConfig = await loadConfig(args.config);
+    } catch {
+      hookConfig = getDefaultConfig();
+    }
+
+    const setupOpts: HooksSetupOptions = {
+      host: hookConfig.api?.host ?? "127.0.0.1",
+      port: args.apiPort ?? hookConfig.api?.port ?? 4820,
+      events: DEFAULT_HOOKS_CONFIG.events,
+      timeout: DEFAULT_HOOKS_CONFIG.timeout,
+      apiKey: hookConfig.api?.apiKey,
+    };
+
+    if (args.hooksPrint) {
+      console.log(printHooksConfig(setupOpts));
+      process.exit(0);
+    }
+
+    if (args.hooksSetup) {
+      const settingsPath = await writeHooksConfig(process.cwd(), setupOpts);
+      console.log(`Hooks configuration written to: ${settingsPath}`);
+      console.log(`Foreman will listen on: http://${setupOpts.host}:${setupOpts.port}`);
+      console.log(`\nStart Foreman with: foreman --hooks --api`);
+      process.exit(0);
+    }
+  }
+
   // Load config
   let config: ForemanConfig;
   try {
     config = await loadConfig(args.config);
   } catch (error) {
     // If no config file and we have a task, use sensible defaults
-    if (args.task) {
+    if (args.task || args.hooks) {
       config = getDefaultConfig();
     } else {
       console.error(
@@ -177,21 +230,39 @@ async function main(): Promise<void> {
   // Initialize
   await orchestrator.initialize();
 
-  // Start API server if configured or --api flag
+  // Start API server if configured or --api flag or --hooks flag
   let apiServer: ApiServer | null = null;
-  if (args.api || config.api?.enabled) {
+  let hookHandler: HookHandler | null = null;
+  if (args.api || args.hooks || config.api?.enabled) {
     const apiConfig = {
       port: args.apiPort ?? config.api?.port ?? 4820,
       host: config.api?.host ?? "127.0.0.1",
       apiKey: config.api?.apiKey,
       corsOrigins: config.api?.corsOrigins ?? ["*"],
     };
+
+    // Create hook handler if hooks mode is enabled
+    if (args.hooks) {
+      hookHandler = new HookHandler({
+        policyEngine: new PolicyEngine(config.policy),
+        knowledgeStore: orchestrator.getKnowledgeStore(),
+        eventBus: orchestrator.getEventBus(),
+        logger: orchestrator.getLogger(),
+      });
+    }
+
     apiServer = new ApiServer({
       orchestrator,
       config: apiConfig,
       logger: orchestrator.getLogger(),
+      hookHandler: hookHandler ?? undefined,
     });
     await apiServer.start();
+
+    if (args.hooks) {
+      console.log(`Hooks server active — Claude Code can POST to http://${apiConfig.host}:${apiConfig.port}/api/hooks/<event>`);
+      console.log(`Run "foreman --hooks-setup" to auto-configure Claude Code.`);
+    }
   }
 
   if (args.noTui) {

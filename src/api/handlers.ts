@@ -6,6 +6,9 @@
 import type { Orchestrator } from "../orchestrator.js";
 import type { Logger } from "../logging/logger.js";
 import type { HandlerMap, RouteResult } from "./router.js";
+import type { HookHandler } from "../hooks/handler.js";
+import type { HookPayload } from "../hooks/types.js";
+import { pathToEvent } from "../hooks/config.js";
 
 export function buildHandlers(orchestrator: Orchestrator, logger: Logger): HandlerMap {
   return {
@@ -331,6 +334,89 @@ export function buildHandlers(orchestrator: Orchestrator, logger: Logger): Handl
       };
 
       return { status: 200, body: safeConfig };
+    },
+  };
+}
+
+/**
+ * Build hook-specific API routes.
+ * These handle Claude Code's HTTP hook protocol.
+ */
+export function buildHookHandlers(hookHandler: HookHandler, logger: Logger): HandlerMap {
+  return {
+    // ── Generic hook endpoint ────────────────────────────────
+    "POST /api/hooks/:event": async ({ params, body }) => {
+      const eventName = pathToEvent(params.event);
+      if (!eventName) {
+        return {
+          status: 400,
+          body: { error: `Unknown hook event: ${params.event}` },
+        };
+      }
+
+      const data = body as Record<string, unknown> | undefined;
+      if (!data) {
+        return {
+          status: 400,
+          body: { error: "Missing request body" },
+        };
+      }
+
+      // Ensure the type field matches the path
+      const payload: HookPayload = {
+        ...data,
+        type: eventName,
+        session_id: String(data.session_id ?? `anon_${Date.now()}`),
+      } as HookPayload;
+
+      const response = await hookHandler.handle(payload);
+
+      return {
+        status: 200,
+        body: response,
+      };
+    },
+
+    // ── Hook sessions ────────────────────────────────────────
+    "GET /api/hooks/sessions": () => {
+      const sessions = hookHandler.getSessions();
+      return {
+        status: 200,
+        body: {
+          sessions: sessions.map((s) => ({
+            sessionId: s.sessionId,
+            model: s.model,
+            cwd: s.cwd,
+            toolCalls: s.toolCalls,
+            deniedCalls: s.deniedCalls,
+            startedAt: s.startedAt,
+            tokens: s.usage.inputTokens + s.usage.outputTokens,
+          })),
+          count: sessions.length,
+        },
+      };
+    },
+
+    // ── Hook session detail ──────────────────────────────────
+    "GET /api/hooks/sessions/:id": ({ params }) => {
+      const session = hookHandler.getSession(params.id);
+      if (!session) {
+        return { status: 404, body: { error: "Hook session not found", id: params.id } };
+      }
+
+      return {
+        status: 200,
+        body: {
+          ...session,
+          recentTools: session.toolHistory.slice(-20).map((t) => ({
+            tool: t.tool,
+            error: t.error,
+            durationMs: t.durationMs,
+            denied: t.denied,
+            timestamp: t.timestamp,
+          })),
+        },
+      };
     },
   };
 }

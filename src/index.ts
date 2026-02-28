@@ -107,5 +107,27 @@ export { ApiServer } from "./api/server.js";
 export { WebSocketServer } from "./api/websocket.js";
 export { RateLimiter } from "./api/middleware.js";
 
+// Hooks
+export { HookHandler } from "./hooks/handler.js";
+export type {
+  HookEvent,
+  HookPayload,
+  HookResponse,
+  HookDecision,
+  HooksConfig,
+  HookSessionState,
+  PreToolUsePayload,
+  PostToolUsePayload,
+  StopPayload,
+  TaskCompletedPayload,
+  SessionStartPayload,
+} from "./hooks/types.js";
+export {
+  generateHooksConfig,
+  writeHooksConfig,
+  printHooksConfig,
+  pathToEvent,
+} from "./hooks/config.js";
+
 // Orchestrator
 export { Orchestrator } from "./orchestrator.js";

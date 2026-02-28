@@ -10,14 +10,17 @@ import type { Orchestrator } from "../orchestrator.js";
 import type { ForemanEvent } from "../types/index.js";
 import { Logger } from "../logging/logger.js";
 import { createRouter, type Route } from "./router.js";
-import { buildHandlers } from "./handlers.js";
+import { buildHandlers, buildHookHandlers } from "./handlers.js";
 import { WebSocketServer } from "./websocket.js";
 import { authMiddleware, corsMiddleware, type ApiConfig } from "./middleware.js";
+import type { HookHandler } from "../hooks/handler.js";
 
 export interface ApiServerOptions {
   orchestrator: Orchestrator;
   config: ApiConfig;
   logger: Logger;
+  /** Optional hook handler for Claude Code hooks integration. */
+  hookHandler?: HookHandler;
 }
 
 export class ApiServer {
@@ -36,6 +39,13 @@ export class ApiServer {
 
     // Build route table from handlers
     const handlers = buildHandlers(this.orchestrator, this.logger);
+
+    // Add hook handlers if configured
+    if (options.hookHandler) {
+      const hookHandlers = buildHookHandlers(options.hookHandler, this.logger);
+      Object.assign(handlers, hookHandlers);
+    }
+
     this.routes = createRouter(handlers);
   }
 
