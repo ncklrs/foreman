@@ -143,6 +143,10 @@ export interface ForemanGlobalConfig {
   maxConcurrentAgents: number;
   /** Agent runtime: "foreman" (built-in) or "claude-code" (Claude Code CLI). */
   runtime?: "foreman" | "claude-code";
+  /** Auto-decompose complex tasks into subtask DAGs. */
+  decompose?: boolean;
+  /** Minimum complexity score (1-10) to trigger auto-decomposition. */
+  decomposeThreshold?: number;
 }
 
 export interface LinearConfig {
@@ -335,6 +339,10 @@ export type ForemanEvent =
   | { type: "provider:health_changed"; providerName: string; health: ProviderHealth }
   | { type: "task:queued"; task: AgentTask }
   | { type: "task:assigned"; task: AgentTask; modelKey: string }
+  | { type: "task:decomposed"; task: AgentTask; subtaskCount: number; strategy: string }
+  | { type: "task:subtask_started"; parentTaskId: string; subtaskId: string; title: string }
+  | { type: "task:subtask_completed"; parentTaskId: string; subtaskId: string; title: string; success: boolean }
+  | { type: "task:graph_completed"; parentTaskId: string; completed: number; failed: number; skipped: number }
   | { type: "autopilot:run_started"; run: AutopilotRun }
   | { type: "autopilot:scan_complete"; run: AutopilotRun; findingsCount: number }
   | { type: "autopilot:ticket_created"; run: AutopilotRun; finding: ReviewFinding; ticketId: string }

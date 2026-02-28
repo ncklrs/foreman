@@ -30,6 +30,7 @@ interface CliArgs {
   hooks?: boolean;
   hooksSetup?: boolean;
   hooksPrint?: boolean;
+  decompose?: boolean;
   help?: boolean;
 }
 
@@ -91,6 +92,9 @@ function parseArgs(argv: string[]): CliArgs {
       case "--hooks-print":
         args.hooksPrint = true;
         break;
+      case "--decompose":
+        args.decompose = true;
+        break;
       case "--help":
       case "-h":
         args.help = true;
@@ -131,6 +135,7 @@ OPTIONS
       --hooks                Enable Claude Code hooks server (starts API with hook endpoints)
       --hooks-setup          Write Claude Code hooks config to .claude/settings.json
       --hooks-print          Print Claude Code hooks config to stdout
+      --decompose            Auto-decompose complex tasks into subtask DAGs
   -h, --help                 Show this help message
 
 EXAMPLES
@@ -211,6 +216,11 @@ async function main(): Promise<void> {
   // Apply runtime override from CLI flag
   if (args.runtime === "claude-code" || args.runtime === "foreman") {
     config.foreman.runtime = args.runtime;
+  }
+
+  // Apply decompose override from CLI flag
+  if (args.decompose) {
+    config.foreman.decompose = true;
   }
 
   // Create orchestrator

@@ -37,6 +37,8 @@ import { KnowledgeStore } from "./learning/knowledge.js";
 import { AgentsMdManager } from "./learning/agents-md.js";
 import { SkillsRegistry } from "./skills/registry.js";
 import type { PromptEnrichment } from "./runtime/prompt.js";
+import { TaskDecomposer } from "./orchestration/decomposer.js";
+import { MultiAgentExecutor } from "./orchestration/executor.js";
 
 type ApprovalHandler = (evaluation: PolicyEvaluation, session: AgentSession) => Promise<boolean>;
 
@@ -271,6 +273,19 @@ export class Orchestrator {
     });
     this.eventBus.emit({ type: "task:assigned", task, modelKey: decision.modelKey });
 
+    // Check if task should be decomposed into subtasks
+    const shouldDecompose = this.config.foreman.decompose ?? false;
+    const decomposeThreshold = this.config.foreman.decomposeThreshold ?? 7;
+    const complexity = this.router.scoreComplexity(task);
+
+    if (shouldDecompose && complexity.score >= decomposeThreshold) {
+      this.logger.info(`Task complexity ${complexity.score} >= threshold ${decomposeThreshold}, decomposing`, {
+        reasoning: complexity.reasoning,
+      });
+      await this.executeDecomposed(task);
+      return;
+    }
+
     const provider = this.registry.getOrThrow(decision.modelKey);
 
     const sandbox = await this.sandboxManager.acquire({
@@ -423,6 +438,100 @@ export class Orchestrator {
     }
 
     return enrichment;
+  }
+
+  /**
+   * Execute a complex task by decomposing it into subtasks and running them
+   * via the MultiAgentExecutor with parallel batching.
+   */
+  private async executeDecomposed(task: AgentTask): Promise<void> {
+    const sandbox = await this.sandboxManager.acquire({
+      taskId: task.id,
+      repository: task.repository,
+      branch: task.branch,
+    });
+
+    try {
+      // Use architect model for decomposition if available
+      const architectProvider = this.registry.get("architect") ?? undefined;
+      const architectConfig = this.config.models["architect"] ?? undefined;
+
+      const decomposer = new TaskDecomposer({
+        provider: architectProvider,
+        modelConfig: architectConfig,
+        heuristicFallback: true,
+      });
+
+      const { graph, strategy, reasoning } = await decomposer.decompose(task);
+
+      this.logger.info(`Task decomposed: ${graph.size()} subtasks via ${strategy}`, {
+        reasoning,
+      });
+
+      this.eventBus.emit({
+        type: "task:decomposed",
+        task,
+        subtaskCount: graph.size(),
+        strategy,
+      });
+
+      // Execute the task graph
+      const executor = new MultiAgentExecutor({
+        config: this.config,
+        registry: this.registry,
+        eventBus: this.eventBus,
+        logger: this.logger,
+        workingDir: sandbox.workingDir,
+        parentTask: task,
+        onEvent: (event) => this.eventBus.emit(event),
+      });
+
+      const result = await executor.execute(graph);
+
+      const stats = result.graph.getStats();
+      this.eventBus.emit({
+        type: "task:graph_completed",
+        parentTaskId: task.id,
+        completed: stats.completed,
+        failed: stats.failed,
+        skipped: stats.skipped,
+      });
+
+      // Create a synthetic session for the decomposed task
+      const session: AgentSession = {
+        id: `decomposed_${task.id}`,
+        task,
+        status: result.success ? "completed" : "failed",
+        modelName: "multi-agent",
+        messages: [],
+        iterations: stats.total,
+        maxIterations: stats.total,
+        tokenUsage: result.totalTokens,
+        startedAt: new Date(Date.now() - result.durationMs),
+        completedAt: new Date(),
+        artifacts: [
+          { type: "log", content: result.summary, createdAt: new Date() },
+        ],
+        error: result.success ? undefined : `${stats.failed} subtask(s) failed`,
+      };
+
+      this.sessions.set(session.id, session);
+      await this.sessionStore.save(session);
+      await this.notifyCompletion(task, session);
+      this.knowledgeStore.learnFromSession(session);
+      await this.knowledgeStore.save();
+
+      this.logger.info(`Decomposed task "${task.title}" ${result.success ? "completed" : "failed"}`, {
+        subtasks: stats.total,
+        completed: stats.completed,
+        failed: stats.failed,
+        durationMs: result.durationMs,
+      });
+    } catch (error) {
+      this.logger.error(`Decomposed task execution error for ${task.id}`, { error });
+    } finally {
+      await this.sandboxManager.release(sandbox.id, true);
+    }
   }
 
   private async notifyCompletion(task: AgentTask, session: AgentSession): Promise<void> {

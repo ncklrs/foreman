@@ -129,5 +129,13 @@ export {
   pathToEvent,
 } from "./hooks/config.js";
 
+// Multi-agent orchestration
+export { TaskGraph } from "./orchestration/graph.js";
+export type { SubTask, SubTaskStatus } from "./orchestration/graph.js";
+export { TaskDecomposer } from "./orchestration/decomposer.js";
+export type { DecomposerOptions, DecompositionResult } from "./orchestration/decomposer.js";
+export { MultiAgentExecutor } from "./orchestration/executor.js";
+export type { ExecutorOptions, ExecutionResult, SubTaskResult } from "./orchestration/executor.js";
+
 // Orchestrator
 export { Orchestrator } from "./orchestrator.js";
