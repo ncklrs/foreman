@@ -1,0 +1,70 @@
+# Foreman Configuration
+# Copy this file to foreman.toml and configure your settings.
+
+[foreman]
+name = "hive-fleet-01"
+log_level = "info"
+max_concurrent_agents = 10
+
+# Linear integration (optional — comment out to disable)
+[linear]
+api_key = "${LINEAR_API_KEY}"
+team = "TRO"
+watch_labels = ["agent-ready"]
+watch_status = "Todo"
+
+# ─── Model Definitions ────────────────────────────────────────────
+
+[models.architect]
+provider = "anthropic"
+model = "claude-opus-4-6"
+role = "planning, architecture, complex reasoning"
+max_tokens = 8192
+temperature = 0.3
+
+[models.coder]
+provider = "anthropic"
+model = "claude-sonnet-4-5-20250929"
+role = "code generation, implementation"
+max_tokens = 4096
+temperature = 0.2
+
+[models.reviewer]
+provider = "local"
+endpoint = "http://localhost:11434"
+model = "qwen3:32b"
+role = "code review, linting, quick checks"
+max_tokens = 2048
+
+[models.fast]
+provider = "anthropic"
+model = "claude-haiku-4-5-20251001"
+role = "classification, routing, simple transforms"
+max_tokens = 1024
+
+# ─── Routing ──────────────────────────────────────────────────────
+
+[routing]
+strategy = "capability_match"
+fallback_chain = ["coder", "architect", "fast"]
+
+# ─── Sandbox ──────────────────────────────────────────────────────
+
+[sandbox]
+type = "docker"
+warm_pool = 3
+timeout_minutes = 30
+cleanup = "on_success"
+
+[sandbox.cloud]
+provider = "fly"
+app = "foreman-sandboxes"
+region = "iad"
+
+# ─── Policy ───────────────────────────────────────────────────────
+
+[policy]
+protected_paths = ["package.json", ".env*", ".github/*"]
+blocked_commands = ["rm -rf /", "curl | sh"]
+max_diff_lines = 500
+require_approval_above = 200
