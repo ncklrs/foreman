@@ -75,6 +75,13 @@ export class ToolResultCache {
       if (path) {
         this.recordFileModification(path);
       }
+      // File modifications invalidate git status/diff caches
+      this.invalidateGitCaches();
+    }
+
+    // git_commit changes git state — invalidate git caches
+    if (toolName === "git_commit" || toolName === "git_branch" || toolName === "create_pull_request") {
+      this.invalidateGitCaches();
     }
 
     // run_command could modify anything — be conservative
@@ -83,6 +90,15 @@ export class ToolResultCache {
       // Only clear cache for commands that might modify files
       if (this.isWriteCommand(command)) {
         this.clear();
+      }
+    }
+  }
+
+  /** Invalidate cached git results (status, diff, log). */
+  private invalidateGitCaches(): void {
+    for (const key of this.cache.keys()) {
+      if (key.startsWith("git_status:") || key.startsWith("git_diff:") || key.startsWith("git_log:")) {
+        this.cache.delete(key);
       }
     }
   }
@@ -107,7 +123,17 @@ export class ToolResultCache {
 
   private isCacheable(toolName: string): boolean {
     // Only cache read-only operations
-    return toolName === "read_file" || toolName === "list_files" || toolName === "search_codebase";
+    switch (toolName) {
+      case "read_file":
+      case "list_files":
+      case "search_codebase":
+      case "git_status":
+      case "git_diff":
+      case "git_log":
+        return true;
+      default:
+        return false;
+    }
   }
 
   private buildKey(toolName: string, input: Record<string, unknown>): string {

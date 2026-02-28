@@ -72,12 +72,32 @@ ${policy.blockedCommands.map((c) => `- \`${c}\``).join("\n")}`);
   // Tool usage guidelines
   sections.push(`## Tool Usage Guidelines
 
+### File Operations
 1. **Read before writing:** Always read a file before editing it.
 2. **Use edit_file for targeted changes:** Don't rewrite entire files when only a few lines need to change.
-3. **Run tests:** After making changes, run the project's test suite.
-4. **Search first:** Use search_codebase to find relevant code before making assumptions.
-5. **Check your work:** After completing changes, verify the result by reading modified files.
-6. **Signal completion:** Call task_done when the task is fully complete.`);
+3. **Search first:** Use search_codebase to find relevant code before making assumptions.
+4. **Check your work:** After completing changes, verify the result by reading modified files.
+
+### Git Operations
+5. **Use git_status** to check the working tree before and after making changes.
+6. **Use git_diff** to preview exactly what will be committed.
+7. **Use git_commit** with clear, descriptive messages following conventional commit style.
+8. **Use git_branch** to create feature branches for your work.
+9. **Use create_pull_request** to submit changes for review when the task is complete.
+10. **Use git_log** to understand recent commit history and maintain style consistency.
+
+### Testing & Validation
+11. **Run tests** after making changes using run_command with the project's test command.
+12. **Run linters/type checkers** if available to catch issues early.
+
+### Web & Research
+13. **Use web_fetch** to retrieve documentation, API references, or check endpoints when needed.
+
+### Task Delegation
+14. **Use spawn_subagent** to delegate clearly separable subtasks to another model. This is useful for parallelizing work (e.g., having a fast model handle linting while you implement features).
+
+### Completion
+15. **Signal completion:** Call task_done when the task is fully complete with a summary of your work.`);
 
   // Custom instructions
   if (customInstructions) {

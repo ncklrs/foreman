@@ -26,6 +26,15 @@ export class PolicyEngine {
         return this.evaluateFileWrite(toolName, input, false);
       case "run_command":
         return this.evaluateCommand(toolName, input);
+      case "git_commit":
+        return this.evaluateGitCommit(toolName, input);
+      case "create_pull_request":
+        return {
+          decision: "require_approval",
+          reason: "Pull request creation modifies remote repository state",
+          toolName,
+          input,
+        };
       default:
         return {
           decision: "allow",
@@ -139,6 +148,30 @@ export class PolicyEngine {
     return {
       decision: "allow",
       reason: "File path is not protected",
+      toolName,
+      input,
+    };
+  }
+
+  private evaluateGitCommit(
+    toolName: string,
+    input: Record<string, unknown>
+  ): PolicyEvaluation {
+    // git_commit is always allowed — it's a local operation
+    // but we require approval if cumulative diff is large
+    const totalDiff = this.getTotalDiffLines();
+    if (totalDiff > this.config.requireApprovalAbove) {
+      return {
+        decision: "require_approval",
+        reason: `Committing ${totalDiff} lines of changes exceeds approval threshold (${this.config.requireApprovalAbove})`,
+        toolName,
+        input,
+      };
+    }
+
+    return {
+      decision: "allow",
+      reason: "Git commit allowed",
       toolName,
       input,
     };

@@ -249,6 +249,8 @@ export class Orchestrator {
       config: this.config,
       workingDir: sandbox.workingDir,
       summarizationProvider,
+      registry: this.registry,
+      useStreaming: true,
       onEvent: (event) => this.eventBus.emit(event),
       onApprovalRequired: approvalHandler
         ? async (evaluation) => approvalHandler(evaluation, loopRef!.getSession())

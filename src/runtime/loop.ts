@@ -14,6 +14,7 @@ import type {
   AgentSession,
   AgentTask,
   ChatMessage,
+  ChatRequest,
   ChatResponse,
   ContentBlock,
   ForemanConfig,
@@ -26,6 +27,7 @@ import type {
   TokenUsage,
 } from "../types/index.js";
 import type { ModelProvider } from "../providers/base.js";
+import { ProviderRegistry } from "../providers/registry.js";
 import { ToolExecutor } from "../tools/executor.js";
 import { CORE_TOOLS } from "../tools/definitions.js";
 import { buildSystemPrompt, buildCodebaseContext } from "./prompt.js";
@@ -33,6 +35,7 @@ import { PolicyEngine } from "../policy/engine.js";
 import { ContextManager } from "./context.js";
 import { RecoveryManager } from "./recovery.js";
 import { ToolResultCache } from "./cache.js";
+import { SubAgentSpawner } from "./subagent.js";
 
 interface AgentLoopOptions {
   task: AgentTask;
@@ -42,6 +45,10 @@ interface AgentLoopOptions {
   maxIterations?: number;
   /** Optional provider for summarization (use a fast/cheap model). */
   summarizationProvider?: ModelProvider;
+  /** Optional provider registry for sub-agent spawning. */
+  registry?: ProviderRegistry;
+  /** Whether to use streaming for real-time output. */
+  useStreaming?: boolean;
   onEvent?: (event: ForemanEvent) => void;
   onApprovalRequired?: (evaluation: PolicyEvaluation) => Promise<boolean>;
 }
@@ -54,8 +61,10 @@ export class AgentLoop extends EventEmitter {
   private contextManager: ContextManager;
   private recoveryManager: RecoveryManager;
   private toolCache: ToolResultCache;
+  private subAgentSpawner: SubAgentSpawner | null;
   private config: ForemanConfig;
   private workingDir: string;
+  private useStreaming: boolean;
   private onEvent: (event: ForemanEvent) => void;
   private onApprovalRequired?: (evaluation: PolicyEvaluation) => Promise<boolean>;
   private aborted = false;
@@ -65,10 +74,16 @@ export class AgentLoop extends EventEmitter {
     this.provider = options.provider;
     this.config = options.config;
     this.workingDir = options.workingDir;
+    this.useStreaming = options.useStreaming ?? false;
     this.toolExecutor = new ToolExecutor(options.workingDir);
     this.policyEngine = new PolicyEngine(options.config.policy);
     this.onEvent = options.onEvent ?? (() => {});
     this.onApprovalRequired = options.onApprovalRequired;
+
+    // Initialize sub-agent spawner if registry is available
+    this.subAgentSpawner = options.registry
+      ? new SubAgentSpawner(options.config, options.registry, options.workingDir, options.onEvent)
+      : null;
 
     // Initialize context manager with model's context window
     const capabilities = options.provider.capabilities();
@@ -154,16 +169,22 @@ export class AgentLoop extends EventEmitter {
           systemPromptTokens
         );
 
-        // Call the model
+        // Call the model (streaming or non-streaming)
+        const chatRequest = {
+          messages: this.session.messages,
+          tools: CORE_TOOLS,
+          systemPrompt,
+          maxTokens: this.config.models[this.session.task.assignedModel ?? "coder"]?.maxTokens ?? 4096,
+          temperature: this.config.models[this.session.task.assignedModel ?? "coder"]?.temperature ?? 0.2,
+        };
+
         let response: ChatResponse;
         try {
-          response = await this.provider.chat({
-            messages: this.session.messages,
-            tools: CORE_TOOLS,
-            systemPrompt,
-            maxTokens: this.config.models[this.session.task.assignedModel ?? "coder"]?.maxTokens ?? 4096,
-            temperature: this.config.models[this.session.task.assignedModel ?? "coder"]?.temperature ?? 0.2,
-          });
+          if (this.useStreaming) {
+            response = await this.chatWithStreaming(chatRequest);
+          } else {
+            response = await this.provider.chat(chatRequest);
+          }
         } catch (error) {
           // Model error — attempt recovery
           const recovery = this.recoveryManager.recordError(
@@ -267,6 +288,65 @@ export class AgentLoop extends EventEmitter {
               toolCallId: toolCall.id,
             });
             break;
+          }
+
+          // Handle spawn_subagent specially — requires SubAgentSpawner
+          if (toolCall.name === "spawn_subagent") {
+            if (!this.subAgentSpawner) {
+              toolResults.push({
+                role: "tool",
+                content: "Sub-agent spawning is not available (no provider registry configured).",
+                toolCallId: toolCall.id,
+              });
+              continue;
+            }
+
+            this.onEvent({
+              type: "agent:tool_call",
+              sessionId: this.session.id,
+              toolName: "spawn_subagent",
+              input: toolCall.input,
+            });
+
+            const subResult = await this.subAgentSpawner.spawn({
+              title: (toolCall.input.title as string) ?? "Subtask",
+              description: (toolCall.input.description as string) ?? "",
+              modelRole: (toolCall.input.model_role as string) ?? "coder",
+              maxIterations: (toolCall.input.max_iterations as number) ?? 25,
+            });
+
+            const resultText = [
+              `Sub-agent ${subResult.success ? "completed" : "failed"}.`,
+              `Summary: ${subResult.summary}`,
+              subResult.filesChanged.length > 0
+                ? `Files changed: ${subResult.filesChanged.join(", ")}`
+                : "No files changed.",
+              `Iterations: ${subResult.iterations}`,
+              subResult.error ? `Error: ${subResult.error}` : "",
+            ].filter(Boolean).join("\n");
+
+            this.onEvent({
+              type: "agent:tool_result",
+              sessionId: this.session.id,
+              toolName: "spawn_subagent",
+              result: { output: resultText, isError: !subResult.success, duration: 0 },
+            });
+
+            // Aggregate sub-agent token usage
+            this.session.tokenUsage.inputTokens += subResult.tokenUsage.inputTokens;
+            this.session.tokenUsage.outputTokens += subResult.tokenUsage.outputTokens;
+
+            // Invalidate cache since sub-agent may have modified files
+            if (subResult.filesChanged.length > 0) {
+              this.toolCache.clear();
+            }
+
+            toolResults.push({
+              role: "tool",
+              content: resultText,
+              toolCallId: toolCall.id,
+            });
+            continue;
           }
 
           // Policy check
@@ -404,6 +484,92 @@ export class AgentLoop extends EventEmitter {
 
     this.session.completedAt = this.session.completedAt ?? new Date();
     return this.getSession();
+  }
+
+  /**
+   * Call the model using streaming, accumulating the full response.
+   * Emits stream events for real-time display in the TUI.
+   */
+  private async chatWithStreaming(request: ChatRequest): Promise<ChatResponse> {
+    const content: ContentBlock[] = [];
+    let textBuffer = "";
+    let currentToolUse: ToolUseBlock | null = null;
+    let toolInputBuffer = "";
+    const usage: TokenUsage = { inputTokens: 0, outputTokens: 0 };
+    let stopReason: ChatResponse["stopReason"] = "end_turn";
+
+    for await (const event of this.provider.chatStream(request)) {
+      switch (event.type) {
+        case "text_delta":
+          if (event.text) {
+            textBuffer += event.text;
+            this.onEvent({
+              type: "agent:stream",
+              sessionId: this.session.id,
+              event,
+            });
+          }
+          break;
+
+        case "tool_use_start":
+          // Flush accumulated text
+          if (textBuffer) {
+            content.push({ type: "text", text: textBuffer } as TextBlock);
+            textBuffer = "";
+          }
+          currentToolUse = {
+            type: "tool_use",
+            id: event.toolUse?.id ?? "",
+            name: event.toolUse?.name ?? "",
+            input: {},
+          };
+          toolInputBuffer = "";
+          break;
+
+        case "tool_use_delta":
+          if (event.text) {
+            toolInputBuffer += event.text;
+          }
+          break;
+
+        case "tool_use_end":
+          if (currentToolUse) {
+            try {
+              currentToolUse.input = JSON.parse(toolInputBuffer || "{}") as Record<string, unknown>;
+            } catch {
+              currentToolUse.input = {};
+            }
+            content.push(currentToolUse);
+            currentToolUse = null;
+            toolInputBuffer = "";
+            stopReason = "tool_use";
+          }
+          break;
+
+        case "message_end":
+          if (event.usage) {
+            usage.inputTokens = event.usage.inputTokens;
+            usage.outputTokens = event.usage.outputTokens;
+          }
+          break;
+
+        case "error":
+          throw new Error(`Stream error: ${event.error}`);
+      }
+    }
+
+    // Flush remaining text
+    if (textBuffer) {
+      content.push({ type: "text", text: textBuffer } as TextBlock);
+    }
+
+    return {
+      id: `stream_${Date.now()}`,
+      content,
+      stopReason,
+      usage,
+      model: this.provider.modelId,
+    };
   }
 
   private async gatherCodebaseContext(): Promise<string> {
