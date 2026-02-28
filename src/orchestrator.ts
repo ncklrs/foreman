@@ -238,6 +238,25 @@ export class Orchestrator {
       await this.linearClient.updateStatus(task.linearTicketId, "In Progress").catch(() => {});
     }
 
+    // Mark GitHub issue as in-progress
+    if (task.id.startsWith("gh_") && this.githubClient) {
+      const issueNumber = parseInt(task.title.match(/#(\d+)/)?.[1] ?? "0");
+      if (issueNumber > 0) {
+        await this.githubClient.addLabels(issueNumber, ["agent-working"]).catch(() => {});
+        await this.githubClient.removeLabel(issueNumber, "agent-ready").catch(() => {});
+      }
+    }
+
+    // Acknowledge Slack message with reaction
+    if (task.id.startsWith("slack_") && this.slackClient) {
+      const parts = task.id.split("_");
+      const channel = parts[1];
+      const ts = parts[2];
+      if (channel && ts) {
+        await this.slackClient.addReaction(channel, ts, "eyes").catch(() => {});
+      }
+    }
+
     const summarizationProvider = this.registry.get("fast") ?? undefined;
 
     const approvalHandler = this.approvalHandler;
@@ -327,16 +346,25 @@ export class Orchestrator {
       const issueNumber = parseInt(task.title.match(/#(\d+)/)?.[1] ?? "0");
       if (issueNumber > 0) {
         await this.githubClient.addComment(issueNumber, summary).catch(() => {});
+        await this.githubClient.removeLabel(issueNumber, "agent-working").catch(() => {});
         if (session.status === "completed") {
           await this.githubClient.addLabels(issueNumber, ["agent-completed"]).catch(() => {});
+        } else if (session.status === "failed") {
+          await this.githubClient.addLabels(issueNumber, ["agent-failed"]).catch(() => {});
         }
       }
     }
 
     if (task.id.startsWith("slack_") && this.slackClient) {
-      const channel = task.id.split("_")[1];
+      const parts = task.id.split("_");
+      const channel = parts[1];
+      const ts = parts[2];
       if (channel) {
-        await this.slackClient.postMessage(channel, summary).catch(() => {});
+        await this.slackClient.postMessage(channel, summary, ts).catch(() => {});
+        if (ts) {
+          const emoji = session.status === "completed" ? "white_check_mark" : "x";
+          await this.slackClient.addReaction(channel, ts, emoji).catch(() => {});
+        }
       }
     }
   }

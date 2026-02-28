@@ -7,6 +7,7 @@
 
 import { loadConfig } from "./config/loader.js";
 import { Orchestrator } from "./orchestrator.js";
+import type { ForemanEvent, AgentSession, PolicyEvaluation } from "./types/index.js";
 
 interface CliArgs {
   config?: string;
@@ -163,6 +164,9 @@ async function main(): Promise<void> {
           break;
       }
     });
+  } else {
+    // TUI mode: render Ink React app
+    await startTUI(orchestrator);
   }
 
   // Run a single task if provided
@@ -206,6 +210,49 @@ async function main(): Promise<void> {
     const hasFailed = sessions.some((s) => s.status === "failed");
     process.exit(hasFailed ? 1 : 0);
   }
+}
+
+async function startTUI(orchestrator: Orchestrator): Promise<void> {
+  // Dynamic import to avoid loading React/Ink when running in --no-tui mode
+  const { render } = await import("ink");
+  const React = await import("react");
+  const { App } = await import("./tui/App.js");
+
+  const events: ForemanEvent[] = [];
+  const sessions: AgentSession[] = [];
+
+  // Subscribe to all events and accumulate them for the TUI
+  orchestrator.getEventBus().onAny((event) => {
+    events.push(event);
+    // Keep only last 500 events in memory
+    if (events.length > 500) events.splice(0, events.length - 500);
+  });
+
+  // Periodically sync sessions from orchestrator
+  const syncInterval = setInterval(() => {
+    sessions.length = 0;
+    sessions.push(...orchestrator.getSessions());
+  }, 500);
+
+  const config = orchestrator.getConfig();
+
+  const instance = render(
+    React.createElement(App, {
+      config,
+      events,
+      sessions,
+      providerHealth: orchestrator.getProviderHealth(),
+      performanceStats: orchestrator.getPerformanceStats(),
+      onApproval: (handler: (evaluation: PolicyEvaluation, session: AgentSession) => Promise<boolean>) => {
+        orchestrator.setApprovalHandler(handler);
+      },
+    })
+  );
+
+  // When the TUI exits, clean up
+  instance.waitUntilExit().then(() => {
+    clearInterval(syncInterval);
+  });
 }
 
 function getDefaultConfig() {
