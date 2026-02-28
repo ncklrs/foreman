@@ -99,10 +99,27 @@ export interface StreamEvent {
 export interface ForemanConfig {
   foreman: ForemanGlobalConfig;
   linear?: LinearConfig;
+  github?: GitHubIntegrationConfig;
+  slack?: SlackIntegrationConfig;
   models: Record<string, ModelConfig>;
   routing: RoutingConfig;
   sandbox: SandboxConfig;
   policy: PolicyConfig;
+}
+
+export interface GitHubIntegrationConfig {
+  token: string;
+  owner: string;
+  repo: string;
+  watchLabels: string[];
+  watchState?: "open" | "closed" | "all";
+}
+
+export interface SlackIntegrationConfig {
+  botToken: string;
+  watchChannels: string[];
+  triggerPrefix?: string;
+  postProgress?: boolean;
 }
 
 export interface ForemanGlobalConfig {

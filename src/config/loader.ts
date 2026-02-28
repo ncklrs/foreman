@@ -169,12 +169,30 @@ export function parseTOML(input: string): Record<string, unknown> {
     const kvMatch = line.match(/^([^=]+?)\s*=\s*(.+)$/);
     if (kvMatch) {
       const key = kvMatch[1].trim();
-      const rawValue = kvMatch[2].trim();
+      const rawValue = stripInlineComment(kvMatch[2].trim());
       currentTable[key] = parseValue(rawValue);
     }
   }
 
   return result;
+}
+
+/** Strip inline comments (# ...) from TOML values, respecting quoted strings. */
+function stripInlineComment(value: string): string {
+  let inString = false;
+  let stringChar = "";
+  for (let i = 0; i < value.length; i++) {
+    const char = value[i];
+    if (inString) {
+      if (char === stringChar) inString = false;
+    } else if (char === '"' || char === "'") {
+      inString = true;
+      stringChar = char;
+    } else if (char === "#") {
+      return value.slice(0, i).trim();
+    }
+  }
+  return value;
 }
 
 function ensurePath(obj: Record<string, unknown>, path: string[]): Record<string, unknown> {

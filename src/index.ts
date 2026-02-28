@@ -22,6 +22,8 @@ export type {
   RoutingDecision,
   TaskComplexity,
   ForemanEvent,
+  GitHubIntegrationConfig,
+  SlackIntegrationConfig,
 } from "./types/index.js";
 
 // Provider layer
@@ -34,6 +36,10 @@ export type { ModelProvider } from "./providers/base.js";
 // Runtime
 export { AgentLoop } from "./runtime/loop.js";
 export { buildSystemPrompt, buildCodebaseContext } from "./runtime/prompt.js";
+export { ContextManager } from "./runtime/context.js";
+export { RecoveryManager } from "./runtime/recovery.js";
+export { ToolResultCache } from "./runtime/cache.js";
+export { SubAgentSpawner } from "./runtime/subagent.js";
 
 // Tools
 export { CORE_TOOLS } from "./tools/definitions.js";
@@ -51,6 +57,13 @@ export { SandboxManager } from "./sandbox/manager.js";
 // Linear
 export { LinearClient } from "./linear/client.js";
 export { LinearWatcher } from "./linear/watcher.js";
+
+// Integrations
+export { GitHubClient, GitHubWatcher } from "./integrations/github.js";
+export { SlackClient, SlackWatcher } from "./integrations/slack.js";
+
+// Events
+export { EventBus } from "./events/bus.js";
 
 // Config
 export { loadConfig } from "./config/loader.js";

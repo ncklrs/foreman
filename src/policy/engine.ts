@@ -8,6 +8,7 @@ import type { PolicyConfig, PolicyDecision, PolicyEvaluation } from "../types/in
 
 export class PolicyEngine {
   private config: PolicyConfig;
+  private diffLineTracker: Map<string, number> = new Map();
 
   constructor(config: PolicyConfig) {
     this.config = config;
@@ -20,8 +21,9 @@ export class PolicyEngine {
     // Check tool-specific policies
     switch (toolName) {
       case "write_file":
+        return this.evaluateFileWrite(toolName, input, true);
       case "edit_file":
-        return this.evaluateFileWrite(toolName, input);
+        return this.evaluateFileWrite(toolName, input, false);
       case "run_command":
         return this.evaluateCommand(toolName, input);
       default:
@@ -34,9 +36,65 @@ export class PolicyEngine {
     }
   }
 
+  /**
+   * Evaluate cumulative diff size across all file writes in a session.
+   * Returns require_approval if the total exceeds the configured threshold.
+   */
+  evaluateDiffSize(totalDiffLines: number): PolicyEvaluation {
+    if (totalDiffLines > this.config.maxDiffLines) {
+      return {
+        decision: "deny",
+        reason: `Total diff size (${totalDiffLines} lines) exceeds maximum (${this.config.maxDiffLines})`,
+        toolName: "diff_check",
+        input: { totalDiffLines },
+      };
+    }
+
+    if (totalDiffLines > this.config.requireApprovalAbove) {
+      return {
+        decision: "require_approval",
+        reason: `Total diff size (${totalDiffLines} lines) exceeds approval threshold (${this.config.requireApprovalAbove})`,
+        toolName: "diff_check",
+        input: { totalDiffLines },
+      };
+    }
+
+    return {
+      decision: "allow",
+      reason: "Diff size within limits",
+      toolName: "diff_check",
+      input: { totalDiffLines },
+    };
+  }
+
+  /**
+   * Track lines changed by a write/edit operation.
+   * Returns the current cumulative diff line count.
+   */
+  trackDiffLines(path: string, linesChanged: number): number {
+    const current = this.diffLineTracker.get(path) ?? 0;
+    this.diffLineTracker.set(path, current + linesChanged);
+    return this.getTotalDiffLines();
+  }
+
+  /** Get total diff lines across all files. */
+  getTotalDiffLines(): number {
+    let total = 0;
+    for (const lines of this.diffLineTracker.values()) {
+      total += lines;
+    }
+    return total;
+  }
+
+  /** Reset diff tracking (e.g., after approval). */
+  resetDiffTracking(): void {
+    this.diffLineTracker.clear();
+  }
+
   private evaluateFileWrite(
     toolName: string,
-    input: Record<string, unknown>
+    input: Record<string, unknown>,
+    isFullWrite: boolean
   ): PolicyEvaluation {
     const filePath = input.path as string;
 
@@ -46,6 +104,32 @@ export class PolicyEngine {
         return {
           decision: "require_approval",
           reason: `File path matches protected pattern: ${pattern}`,
+          toolName,
+          input,
+        };
+      }
+    }
+
+    // Estimate diff size and track it
+    let estimatedLines = 0;
+    if (isFullWrite && input.content) {
+      estimatedLines = String(input.content).split("\n").length;
+    } else if (input.new_string) {
+      // For edits, estimate based on the replacement
+      const oldLines = String(input.old_string ?? "").split("\n").length;
+      const newLines = String(input.new_string).split("\n").length;
+      estimatedLines = Math.abs(newLines - oldLines) + Math.min(oldLines, newLines);
+    }
+
+    if (estimatedLines > 0) {
+      const totalDiff = this.trackDiffLines(filePath, estimatedLines);
+
+      // Check cumulative diff size
+      const diffEval = this.evaluateDiffSize(totalDiff);
+      if (diffEval.decision !== "allow") {
+        return {
+          decision: diffEval.decision,
+          reason: diffEval.reason,
           toolName,
           input,
         };
@@ -139,7 +223,14 @@ function matchesPath(filePath: string, pattern: string): boolean {
 
   // Use minimatch for glob patterns
   if (pattern.includes("*")) {
-    return minimatch(normalized, pattern);
+    // For patterns like ".github/*", also try matching with "**" for deep nesting
+    if (minimatch(normalized, pattern)) return true;
+    // Convert trailing /* to /** for recursive matching (policy convention)
+    if (pattern.endsWith("/*")) {
+      const recursivePattern = pattern.slice(0, -2) + "/**";
+      if (minimatch(normalized, recursivePattern)) return true;
+    }
+    return false;
   }
 
   // Prefix match for directory patterns

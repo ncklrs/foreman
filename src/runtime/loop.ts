@@ -2,6 +2,11 @@
  * Core agentic execution loop.
  * Sends messages to the model, processes tool-use responses,
  * executes tools, and feeds results back until task completion.
+ *
+ * Integrates:
+ * - Context window management (auto-summarization)
+ * - Multi-turn recovery (error/loop/stall detection)
+ * - Tool result caching (avoid re-reading unchanged files)
  */
 
 import { EventEmitter } from "node:events";
@@ -25,6 +30,9 @@ import { ToolExecutor } from "../tools/executor.js";
 import { CORE_TOOLS } from "../tools/definitions.js";
 import { buildSystemPrompt, buildCodebaseContext } from "./prompt.js";
 import { PolicyEngine } from "../policy/engine.js";
+import { ContextManager } from "./context.js";
+import { RecoveryManager } from "./recovery.js";
+import { ToolResultCache } from "./cache.js";
 
 interface AgentLoopOptions {
   task: AgentTask;
@@ -32,6 +40,8 @@ interface AgentLoopOptions {
   config: ForemanConfig;
   workingDir: string;
   maxIterations?: number;
+  /** Optional provider for summarization (use a fast/cheap model). */
+  summarizationProvider?: ModelProvider;
   onEvent?: (event: ForemanEvent) => void;
   onApprovalRequired?: (evaluation: PolicyEvaluation) => Promise<boolean>;
 }
@@ -41,6 +51,9 @@ export class AgentLoop extends EventEmitter {
   private provider: ModelProvider;
   private toolExecutor: ToolExecutor;
   private policyEngine: PolicyEngine;
+  private contextManager: ContextManager;
+  private recoveryManager: RecoveryManager;
+  private toolCache: ToolResultCache;
   private config: ForemanConfig;
   private workingDir: string;
   private onEvent: (event: ForemanEvent) => void;
@@ -56,6 +69,26 @@ export class AgentLoop extends EventEmitter {
     this.policyEngine = new PolicyEngine(options.config.policy);
     this.onEvent = options.onEvent ?? (() => {});
     this.onApprovalRequired = options.onApprovalRequired;
+
+    // Initialize context manager with model's context window
+    const capabilities = options.provider.capabilities();
+    this.contextManager = new ContextManager({
+      maxContextTokens: capabilities.maxContextWindow,
+      summarizationThreshold: 0.75,
+      preserveRecentMessages: 12,
+      summarizationProvider: options.summarizationProvider,
+    });
+
+    // Initialize recovery manager with known tool names
+    this.recoveryManager = new RecoveryManager({
+      knownTools: new Set(CORE_TOOLS.map((t) => t.name)),
+      maxConsecutiveErrors: 3,
+      maxRepeatedToolCalls: 3,
+      maxStallIterations: 15,
+    });
+
+    // Initialize tool result cache
+    this.toolCache = new ToolResultCache();
 
     this.session = {
       id: generateId(),
@@ -94,6 +127,8 @@ export class AgentLoop extends EventEmitter {
         this.config.policy
       );
 
+      const systemPromptTokens = Math.ceil(systemPrompt.length / 4);
+
       // Initial user message with the task
       this.session.messages.push({
         role: "user",
@@ -113,24 +148,73 @@ export class AgentLoop extends EventEmitter {
           iteration: this.session.iterations,
         });
 
+        // Context window management: summarize old messages if needed
+        this.session.messages = await this.contextManager.manage(
+          this.session.messages,
+          systemPromptTokens
+        );
+
         // Call the model
-        const response = await this.provider.chat({
-          messages: this.session.messages,
-          tools: CORE_TOOLS,
-          systemPrompt,
-          maxTokens: this.config.models[this.session.task.assignedModel ?? "coder"]?.maxTokens ?? 4096,
-          temperature: this.config.models[this.session.task.assignedModel ?? "coder"]?.temperature ?? 0.2,
-        });
+        let response: ChatResponse;
+        try {
+          response = await this.provider.chat({
+            messages: this.session.messages,
+            tools: CORE_TOOLS,
+            systemPrompt,
+            maxTokens: this.config.models[this.session.task.assignedModel ?? "coder"]?.maxTokens ?? 4096,
+            temperature: this.config.models[this.session.task.assignedModel ?? "coder"]?.temperature ?? 0.2,
+          });
+        } catch (error) {
+          // Model error — attempt recovery
+          const recovery = this.recoveryManager.recordError(
+            error instanceof Error ? error.message : String(error)
+          );
+
+          if (recovery.type === "abort") {
+            this.session.status = "failed";
+            this.session.error = recovery.reason;
+            this.onEvent({
+              type: "agent:failed",
+              session: this.getSession(),
+              error: recovery.reason,
+            });
+            break;
+          }
+
+          if (recovery.type === "inject_message") {
+            this.session.messages.push(recovery.message);
+          }
+          continue;
+        }
 
         // Track token usage
         this.session.tokenUsage.inputTokens += response.usage.inputTokens;
         this.session.tokenUsage.outputTokens += response.usage.outputTokens;
+
+        // Recovery analysis: check for hallucinated tools, loops, stalls
+        const recovery = this.recoveryManager.analyze(response);
+        if (recovery.type === "abort") {
+          this.session.status = "failed";
+          this.session.error = recovery.reason;
+          this.onEvent({
+            type: "agent:failed",
+            session: this.getSession(),
+            error: recovery.reason,
+          });
+          break;
+        }
 
         // Add assistant response to conversation
         this.session.messages.push({
           role: "assistant",
           content: response.content,
         });
+
+        // If recovery injected a corrective message, add it and continue
+        if (recovery.type === "inject_message") {
+          this.session.messages.push(recovery.message);
+          continue;
+        }
 
         // Emit text content for streaming display
         for (const block of response.content) {
@@ -151,8 +235,6 @@ export class AgentLoop extends EventEmitter {
         if (toolUseBlocks.length === 0) {
           // No tool use — check if the model signaled completion
           if (response.stopReason === "end_turn") {
-            // Model finished without calling task_done.
-            // This could mean it's stuck or it considers the task done.
             this.session.status = "completed";
             this.session.completedAt = new Date();
             break;
@@ -179,7 +261,6 @@ export class AgentLoop extends EventEmitter {
               session: this.getSession(),
             });
 
-            // Add final tool result
             toolResults.push({
               role: "tool",
               content: "Task marked as complete.",
@@ -228,7 +309,6 @@ export class AgentLoop extends EventEmitter {
                 continue;
               }
             } else {
-              // No approval handler — deny by default
               toolResults.push({
                 role: "tool",
                 content: `Tool call requires approval but no approval handler configured: ${policyEval.reason}`,
@@ -238,11 +318,42 @@ export class AgentLoop extends EventEmitter {
             }
           }
 
+          // Check tool result cache (for read-only operations)
+          const cached = this.toolCache.get(toolCall.name, toolCall.input);
+          if (cached !== null) {
+            this.onEvent({
+              type: "agent:tool_result",
+              sessionId: this.session.id,
+              toolName: toolCall.name,
+              result: { output: cached, isError: false, duration: 0 },
+            });
+
+            toolResults.push({
+              role: "tool",
+              content: cached,
+              toolCallId: toolCall.id,
+            });
+            continue;
+          }
+
           // Execute the tool
           const result = await this.toolExecutor.execute(
             toolCall.name,
             toolCall.input
           );
+
+          // Cache the result and track writes
+          if (!result.isError) {
+            this.toolCache.set(toolCall.name, toolCall.input, result.output);
+          }
+          if (toolCall.name === "write_file" || toolCall.name === "edit_file" || toolCall.name === "run_command") {
+            this.toolCache.recordWrite(toolCall.name, toolCall.input);
+          }
+
+          // Record tool errors for recovery tracking
+          if (result.isError) {
+            this.recoveryManager.recordToolError(toolCall.name, result.output);
+          }
 
           this.onEvent({
             type: "agent:tool_result",
@@ -297,21 +408,18 @@ export class AgentLoop extends EventEmitter {
 
   private async gatherCodebaseContext(): Promise<string> {
     try {
-      // Get project structure (limited depth)
       const treeResult = await this.toolExecutor.execute("run_command", {
         command:
           "find . -maxdepth 3 -not -path '*/node_modules/*' -not -path '*/.git/*' -not -path '*/dist/*' | head -100 | sort",
         timeout: 5000,
       });
 
-      // Try to read package.json for project info
       let packageInfo: Record<string, unknown> | undefined;
       try {
         const pkgResult = await this.toolExecutor.execute("read_file", {
           path: "package.json",
         });
         if (!pkgResult.isError) {
-          // Strip line numbers from the read_file output
           const rawContent = pkgResult.output
             .split("\n")
             .map((line) => line.replace(/^\d+\t/, ""))
@@ -319,10 +427,9 @@ export class AgentLoop extends EventEmitter {
           packageInfo = JSON.parse(rawContent) as Record<string, unknown>;
         }
       } catch {
-        // No package.json — that's fine
+        // No package.json
       }
 
-      // Get recent git commits
       let recentCommits: string | undefined;
       try {
         const gitResult = await this.toolExecutor.execute("run_command", {
@@ -333,7 +440,7 @@ export class AgentLoop extends EventEmitter {
           recentCommits = gitResult.output;
         }
       } catch {
-        // Not a git repo or git not available
+        // Not a git repo
       }
 
       return buildCodebaseContext(
