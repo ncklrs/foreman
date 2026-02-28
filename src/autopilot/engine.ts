@@ -26,6 +26,7 @@ import { GitHubClient } from "../integrations/github.js";
 import { LinearClient } from "../linear/client.js";
 import { EventBus } from "../events/bus.js";
 import { Logger } from "../logging/logger.js";
+import type { KnowledgeStore } from "../learning/knowledge.js";
 
 interface AutopilotEngineOptions {
   config: ForemanConfig;
@@ -37,6 +38,8 @@ interface AutopilotEngineOptions {
   linearClient?: LinearClient | null;
   /** Callback to enqueue tasks for resolution. */
   onEnqueueTask?: (task: { id: string; title: string; description: string; labels?: string[]; branch?: string }) => void;
+  /** Knowledge store for cross-run deduplication. */
+  knowledgeStore?: KnowledgeStore;
 }
 
 export class AutopilotEngine {
@@ -49,6 +52,7 @@ export class AutopilotEngine {
   private eventBus: EventBus;
   private logger: Logger;
   private onEnqueueTask?: AutopilotEngineOptions["onEnqueueTask"];
+  private knowledgeStore?: KnowledgeStore;
 
   private runs: AutopilotRun[] = [];
   private activeRun: AutopilotRun | null = null;
@@ -60,6 +64,7 @@ export class AutopilotEngine {
     this.eventBus = options.eventBus;
     this.logger = options.logger.child("autopilot");
     this.onEnqueueTask = options.onEnqueueTask;
+    this.knowledgeStore = options.knowledgeStore;
 
     const workingDir = options.autopilotConfig.workingDir ?? process.cwd();
     this.reviewer = new CodebaseReviewer(workingDir);
@@ -150,9 +155,17 @@ export class AutopilotEngine {
       );
 
       // Filter by minimum severity
-      run.findings = findings.filter(
+      let eligible = findings.filter(
         (f) => f.severity >= this.autopilotConfig.minSeverity
       );
+
+      // Deduplicate against previously seen findings via knowledge store
+      if (this.knowledgeStore) {
+        eligible = this.knowledgeStore.learnFromFindings(eligible);
+        await this.knowledgeStore.save();
+      }
+
+      run.findings = eligible;
 
       this.eventBus.emit({
         type: "autopilot:scan_complete",

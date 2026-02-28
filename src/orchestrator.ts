@@ -32,6 +32,10 @@ import { SlackWatcher, SlackClient } from "./integrations/slack.js";
 import { SessionStore } from "./storage/sessions.js";
 import { PerformanceTracker } from "./router/performance.js";
 import { AutopilotEngine } from "./autopilot/engine.js";
+import { KnowledgeStore } from "./learning/knowledge.js";
+import { AgentsMdManager } from "./learning/agents-md.js";
+import { SkillsRegistry } from "./skills/registry.js";
+import type { PromptEnrichment } from "./runtime/prompt.js";
 
 type ApprovalHandler = (evaluation: PolicyEvaluation, session: AgentSession) => Promise<boolean>;
 
@@ -53,6 +57,9 @@ export class Orchestrator {
   private slackWatcher: SlackWatcher | null = null;
   private slackClient: SlackClient | null = null;
   private autopilotEngine: AutopilotEngine | null = null;
+  private knowledgeStore: KnowledgeStore;
+  private agentsMdManager: AgentsMdManager | null = null;
+  private skillsRegistry: SkillsRegistry;
 
   private sessions: Map<string, AgentSession> = new Map();
   private activeLoops: Map<string, AgentLoop> = new Map();
@@ -77,6 +84,8 @@ export class Orchestrator {
     this.eventBus = new EventBus(2000);
     this.logger = new Logger(config.foreman.logLevel, config.foreman.name);
     this.sessionStore = new SessionStore();
+    this.knowledgeStore = new KnowledgeStore();
+    this.skillsRegistry = new SkillsRegistry();
   }
 
   async initialize(): Promise<void> {
@@ -89,6 +98,14 @@ export class Orchestrator {
       this.logger.warn("Sandbox init failed, using local fallback", {
         error: error instanceof Error ? error.message : error,
       });
+    }
+
+    // Load learning system
+    await this.knowledgeStore.load();
+    this.agentsMdManager = new AgentsMdManager(process.cwd());
+    const skillsLoaded = await this.skillsRegistry.loadFromDirectory(process.cwd());
+    if (skillsLoaded > 0) {
+      this.logger.info(`Loaded ${skillsLoaded} custom skill(s)`);
     }
 
     this.providerHealth = await this.registry.healthCheckAll();
@@ -139,6 +156,7 @@ export class Orchestrator {
         githubClient: this.githubClient,
         linearClient: this.linearClient,
         onEnqueueTask: (task) => this.enqueueTask(task, "autopilot"),
+        knowledgeStore: this.knowledgeStore,
       });
       this.logger.info("Autopilot configured", {
         schedule: this.config.autopilot.schedule,
@@ -199,6 +217,7 @@ export class Orchestrator {
       await this.sessionStore.save(session);
     }
 
+    await this.knowledgeStore.save();
     await this.sandboxManager.destroyAll();
     this.logger.info("Foreman stopped");
   }
@@ -222,6 +241,8 @@ export class Orchestrator {
   getPerformanceStats() { return this.performanceTracker.getStats(); }
   getLogger(): Logger { return this.logger; }
   getAutopilotEngine(): AutopilotEngine | null { return this.autopilotEngine; }
+  getKnowledgeStore(): KnowledgeStore { return this.knowledgeStore; }
+  getSkillsRegistry(): SkillsRegistry { return this.skillsRegistry; }
 
   private processQueue(): void {
     if (!this.running) return;
@@ -282,6 +303,9 @@ export class Orchestrator {
 
     const summarizationProvider = this.registry.get("fast") ?? undefined;
 
+    // Build prompt enrichment from learning system
+    const enrichment = await this.buildEnrichment(task);
+
     const approvalHandler = this.approvalHandler;
     let loopRef: AgentLoop | null = null;
 
@@ -297,6 +321,7 @@ export class Orchestrator {
       onApprovalRequired: approvalHandler
         ? async (evaluation) => approvalHandler(evaluation, loopRef!.getSession())
         : undefined,
+      promptEnrichment: enrichment,
     });
     loopRef = loop;
 
@@ -336,6 +361,10 @@ export class Orchestrator {
       await this.sessionStore.save(session);
       await this.notifyCompletion(task, session);
 
+      // Learn from completed session
+      this.knowledgeStore.learnFromSession(session);
+      await this.knowledgeStore.save();
+
       this.logger.info(`Task "${task.title}" ${session.status}`, {
         model: session.modelName,
         iterations: session.iterations,
@@ -348,6 +377,32 @@ export class Orchestrator {
       this.activeLoops.delete(sessionId);
       this.processQueue();
     }
+  }
+
+  private async buildEnrichment(task: AgentTask): Promise<PromptEnrichment> {
+    const enrichment: PromptEnrichment = {};
+
+    // Lessons from KnowledgeStore
+    const lessonsSection = this.knowledgeStore.buildPromptSection(task.labels ?? []);
+    if (lessonsSection) {
+      enrichment.lessonsSection = lessonsSection;
+    }
+
+    // AGENTS.md project conventions
+    if (this.agentsMdManager) {
+      const agentsMd = await this.agentsMdManager.load();
+      if (agentsMd) {
+        enrichment.agentsMdSection = this.agentsMdManager.buildPromptSection(agentsMd);
+      }
+    }
+
+    // Matched skills
+    const matchedSkills = this.skillsRegistry.matchSkills(task.title, task.labels);
+    if (matchedSkills.length > 0) {
+      enrichment.skillsSection = this.skillsRegistry.buildPromptSection(matchedSkills);
+    }
+
+    return enrichment;
   }
 
   private async notifyCompletion(task: AgentTask, session: AgentSession): Promise<void> {

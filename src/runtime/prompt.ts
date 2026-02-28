@@ -5,11 +5,21 @@
 
 import type { AgentTask, PolicyConfig } from "../types/index.js";
 
+export interface PromptEnrichment {
+  /** Lessons learned from past sessions (from KnowledgeStore). */
+  lessonsSection?: string;
+  /** Project conventions (from AGENTS.md). */
+  agentsMdSection?: string;
+  /** Active skills matching this task (from SkillsRegistry). */
+  skillsSection?: string;
+}
+
 export function buildSystemPrompt(
   task: AgentTask,
   codebaseContext: string,
   policy: PolicyConfig,
-  customInstructions?: string
+  customInstructions?: string,
+  enrichment?: PromptEnrichment
 ): string {
   const sections: string[] = [];
 
@@ -42,6 +52,21 @@ ${task.description}`);
     sections.push(`## Codebase Context
 
 ${codebaseContext}`);
+  }
+
+  // AGENTS.md project conventions
+  if (enrichment?.agentsMdSection) {
+    sections.push(enrichment.agentsMdSection);
+  }
+
+  // Lessons from past sessions
+  if (enrichment?.lessonsSection) {
+    sections.push(enrichment.lessonsSection);
+  }
+
+  // Active skills
+  if (enrichment?.skillsSection) {
+    sections.push(enrichment.skillsSection);
   }
 
   // Code standards

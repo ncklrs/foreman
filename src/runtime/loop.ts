@@ -31,6 +31,7 @@ import { ProviderRegistry } from "../providers/registry.js";
 import { ToolExecutor } from "../tools/executor.js";
 import { CORE_TOOLS } from "../tools/definitions.js";
 import { buildSystemPrompt, buildCodebaseContext } from "./prompt.js";
+import type { PromptEnrichment } from "./prompt.js";
 import { PolicyEngine } from "../policy/engine.js";
 import { ContextManager } from "./context.js";
 import { RecoveryManager } from "./recovery.js";
@@ -51,6 +52,8 @@ interface AgentLoopOptions {
   useStreaming?: boolean;
   onEvent?: (event: ForemanEvent) => void;
   onApprovalRequired?: (evaluation: PolicyEvaluation) => Promise<boolean>;
+  /** Enrichment data from learning system, AGENTS.md, and skills. */
+  promptEnrichment?: PromptEnrichment;
 }
 
 export class AgentLoop extends EventEmitter {
@@ -67,6 +70,7 @@ export class AgentLoop extends EventEmitter {
   private useStreaming: boolean;
   private onEvent: (event: ForemanEvent) => void;
   private onApprovalRequired?: (evaluation: PolicyEvaluation) => Promise<boolean>;
+  private promptEnrichment?: PromptEnrichment;
   private aborted = false;
 
   constructor(options: AgentLoopOptions) {
@@ -79,6 +83,7 @@ export class AgentLoop extends EventEmitter {
     this.policyEngine = new PolicyEngine(options.config.policy);
     this.onEvent = options.onEvent ?? (() => {});
     this.onApprovalRequired = options.onApprovalRequired;
+    this.promptEnrichment = options.promptEnrichment;
 
     // Initialize sub-agent spawner if registry is available
     this.subAgentSpawner = options.registry
@@ -139,7 +144,9 @@ export class AgentLoop extends EventEmitter {
       const systemPrompt = buildSystemPrompt(
         this.session.task,
         codebaseContext,
-        this.config.policy
+        this.config.policy,
+        undefined,
+        this.promptEnrichment
       );
 
       const systemPromptTokens = Math.ceil(systemPrompt.length / 4);

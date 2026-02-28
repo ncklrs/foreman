@@ -88,5 +88,17 @@ export { loadConfig } from "./config/loader.js";
 // Autopilot
 export { AutopilotEngine, AutopilotScheduler, CodebaseReviewer, TicketCreator } from "./autopilot/index.js";
 
+// Learning
+export { KnowledgeStore } from "./learning/knowledge.js";
+export type { Lesson, FailurePattern, KnowledgeBase } from "./learning/knowledge.js";
+export { AgentsMdManager } from "./learning/agents-md.js";
+
+// Skills
+export { SkillsRegistry } from "./skills/registry.js";
+export type { Skill } from "./skills/registry.js";
+
+// Prompt enrichment
+export type { PromptEnrichment } from "./runtime/prompt.js";
+
 // Orchestrator
 export { Orchestrator } from "./orchestrator.js";
