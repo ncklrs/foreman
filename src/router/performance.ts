@@ -13,6 +13,7 @@ export interface PerformanceRecord {
   durationMs: number;
   iterations: number;
   tokenUsage: TokenUsage;
+  costUsd?: number;
   labels?: string[];
   timestamp?: Date;
 }
@@ -88,6 +89,11 @@ export class PerformanceTracker {
     return bestKey;
   }
 
+  /** Get total spend across all models. */
+  getTotalSpend(): number {
+    return this.records.reduce((sum, r) => sum + (r.costUsd ?? 0), 0);
+  }
+
   /** Get recent records for display. */
   getRecent(count = 20): PerformanceRecord[] {
     return this.records.slice(-count);
@@ -127,7 +133,7 @@ export class PerformanceTracker {
       avgDurationMs: totalDuration / entries.length,
       avgIterations: totalIterations / entries.length,
       avgTokens: totalTokens / entries.length,
-      totalCost: 0, // Would need cost profiles to calculate
+      totalCost: entries.reduce((sum, e) => sum + (e.costUsd ?? 0), 0),
       recentSuccessRate: recent.length > 0 ? recentSuccesses.length / recent.length : 0,
     };
   }

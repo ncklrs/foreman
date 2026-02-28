@@ -6,12 +6,29 @@ name = "hive-fleet-01"
 log_level = "info"
 max_concurrent_agents = 10
 
-# Linear integration (optional — comment out to disable)
+# ─── Task Sources (all optional) ─────────────────────────────────
+
+# Linear integration — watches for tickets with matching labels/status
 [linear]
 api_key = "${LINEAR_API_KEY}"
 team = "TRO"
 watch_labels = ["agent-ready"]
 watch_status = "Todo"
+
+# GitHub Issues integration — watches for issues with matching labels
+[github]
+token = "${GITHUB_TOKEN}"
+owner = "your-org"
+repo = "your-repo"
+watch_labels = ["agent-ready"]
+watch_state = "open"
+
+# Slack integration — watches channels for !agent commands
+[slack]
+bot_token = "${SLACK_BOT_TOKEN}"
+watch_channels = ["#eng-agents"]
+trigger_prefix = "!agent"
+post_progress = true
 
 # ─── Model Definitions ────────────────────────────────────────────
 

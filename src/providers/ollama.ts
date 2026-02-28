@@ -16,6 +16,7 @@ import type {
   TokenUsage,
 } from "../types/index.js";
 import { BaseProvider } from "./base.js";
+import { withRetry } from "../utils/retry.js";
 
 interface OllamaProviderOptions {
   endpoint: string;
@@ -151,21 +152,23 @@ export class OllamaProvider extends BaseProvider {
   }
 
   async chat(request: ChatRequest): Promise<ChatResponse> {
-    const body = this.buildRequestBody(request);
+    return withRetry(async () => {
+      const body = this.buildRequestBody(request);
 
-    const response = await fetch(`${this.endpoint}/v1/chat/completions`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
+      const response = await fetch(`${this.endpoint}/v1/chat/completions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Ollama API error (${response.status}): ${errorText}`);
+      }
+
+      const data = (await response.json()) as OAIResponse;
+      return this.parseResponse(data);
     });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Ollama API error (${response.status}): ${errorText}`);
-    }
-
-    const data = (await response.json()) as OAIResponse;
-    return this.parseResponse(data);
   }
 
   async *chatStream(request: ChatRequest): AsyncIterable<StreamEvent> {

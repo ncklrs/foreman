@@ -43,9 +43,31 @@ export class ToolExecutor {
         case "list_files":
           output = await this.listFiles(input);
           break;
+        case "git_status":
+          output = await this.gitStatus();
+          break;
+        case "git_diff":
+          output = await this.gitDiff(input);
+          break;
+        case "git_commit":
+          output = await this.gitCommit(input);
+          break;
+        case "git_log":
+          output = await this.gitLog(input);
+          break;
+        case "git_branch":
+          output = await this.gitBranch(input);
+          break;
+        case "create_pull_request":
+          output = await this.createPullRequest(input);
+          break;
+        case "web_fetch":
+          output = await this.webFetch(input);
+          break;
         case "task_done":
           output = `Task completed: ${input.summary as string}`;
           break;
+        // spawn_subagent is handled by the agent loop, not the executor
         default:
           return {
             output: `Unknown tool: ${toolName}`,
@@ -247,5 +269,176 @@ export class ToolExecutor {
       });
 
     return lines.join("\n") || "(empty directory)";
+  }
+
+  // ─── Git Tools ──────────────────────────────────────────────────
+
+  private async gitStatus(): Promise<string> {
+    return this.runCommand({ command: "git status --short", timeout: 10000 });
+  }
+
+  private async gitDiff(input: Record<string, unknown>): Promise<string> {
+    const staged = (input.staged as boolean) ?? false;
+    const ref = input.ref as string | undefined;
+    const path = input.path as string | undefined;
+
+    const args = ["git", "diff"];
+    if (staged) args.push("--cached");
+    if (ref) args.push(ref);
+    if (path) args.push("--", path);
+
+    return this.runCommand({ command: args.join(" "), timeout: 15000 });
+  }
+
+  private async gitCommit(input: Record<string, unknown>): Promise<string> {
+    const message = input.message as string;
+    const files = input.files as string[] | undefined;
+
+    // Stage files
+    if (files && files.length > 0) {
+      const escaped = files.map((f) => `"${f}"`).join(" ");
+      await this.runCommand({ command: `git add ${escaped}`, timeout: 10000 });
+    } else {
+      await this.runCommand({ command: "git add -A", timeout: 10000 });
+    }
+
+    // Commit — use heredoc to handle message with special chars
+    const escapedMsg = message.replace(/'/g, "'\\''");
+    const result = await this.runCommand({
+      command: `git commit -m '${escapedMsg}'`,
+      timeout: 15000,
+    });
+
+    return result;
+  }
+
+  private async gitLog(input: Record<string, unknown>): Promise<string> {
+    const count = (input.count as number) ?? 10;
+    const oneline = (input.oneline as boolean) ?? true;
+    const ref = (input.ref as string) ?? "HEAD";
+
+    const format = oneline ? "--oneline" : "--format=%H %an %ad %s";
+    return this.runCommand({
+      command: `git log ${format} -${count} ${ref}`,
+      timeout: 10000,
+    });
+  }
+
+  private async gitBranch(input: Record<string, unknown>): Promise<string> {
+    const action = input.action as string;
+    const name = input.name as string | undefined;
+
+    switch (action) {
+      case "list":
+        return this.runCommand({ command: "git branch -a", timeout: 10000 });
+      case "create":
+        if (!name) throw new Error("Branch name is required for create action");
+        return this.runCommand({ command: `git checkout -b '${name}'`, timeout: 10000 });
+      case "switch":
+        if (!name) throw new Error("Branch name is required for switch action");
+        return this.runCommand({ command: `git checkout '${name}'`, timeout: 10000 });
+      default:
+        throw new Error(`Unknown branch action: ${action}`);
+    }
+  }
+
+  private async createPullRequest(input: Record<string, unknown>): Promise<string> {
+    const title = input.title as string;
+    const body = input.body as string;
+    const base = (input.base as string) ?? "main";
+    const draft = (input.draft as boolean) ?? false;
+
+    // Get current branch name
+    const branchResult = await this.runCommand({
+      command: "git rev-parse --abbrev-ref HEAD",
+      timeout: 5000,
+    });
+    const branch = branchResult.trim();
+
+    if (branch === base) {
+      throw new Error(`Cannot create PR: currently on base branch '${base}'. Create a feature branch first.`);
+    }
+
+    // Push branch to remote
+    await this.runCommand({
+      command: `git push -u origin '${branch}'`,
+      timeout: 30000,
+    });
+
+    // Create PR via gh CLI
+    const escapedTitle = title.replace(/'/g, "'\\''");
+    const escapedBody = body.replace(/'/g, "'\\''");
+    const args = [
+      "gh", "pr", "create",
+      "--title", `'${escapedTitle}'`,
+      "--body", `'${escapedBody}'`,
+      "--base", base,
+    ];
+    if (draft) args.push("--draft");
+
+    const result = await this.runCommand({
+      command: args.join(" "),
+      timeout: 30000,
+    });
+
+    return result;
+  }
+
+  // ─── Web Tools ──────────────────────────────────────────────────
+
+  private async webFetch(input: Record<string, unknown>): Promise<string> {
+    const url = input.url as string;
+    const method = (input.method as string) ?? "GET";
+    const headers = (input.headers as Record<string, string>) ?? {};
+    const body = input.body as string | undefined;
+    const maxLength = (input.max_length as number) ?? 50000;
+
+    // Validate URL
+    let parsedUrl: URL;
+    try {
+      parsedUrl = new URL(url);
+    } catch {
+      throw new Error(`Invalid URL: ${url}`);
+    }
+
+    // Block non-http(s) schemes
+    if (!parsedUrl.protocol.startsWith("http")) {
+      throw new Error(`Only HTTP/HTTPS URLs are supported, got: ${parsedUrl.protocol}`);
+    }
+
+    const fetchOptions: RequestInit = {
+      method,
+      headers: {
+        "User-Agent": "Foreman/1.0",
+        ...headers,
+      },
+      signal: AbortSignal.timeout(30000),
+    };
+
+    if (body && method !== "GET") {
+      fetchOptions.body = body;
+    }
+
+    const response = await fetch(url, fetchOptions);
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status} ${response.statusText}`);
+    }
+
+    const contentType = response.headers.get("content-type") ?? "";
+    let text: string;
+
+    if (contentType.includes("application/json")) {
+      const json = await response.json();
+      text = JSON.stringify(json, null, 2);
+    } else {
+      text = await response.text();
+    }
+
+    if (text.length > maxLength) {
+      text = text.slice(0, maxLength) + `\n\n[truncated — ${text.length} chars total]`;
+    }
+
+    return `[${response.status} ${response.statusText}]\n${text}`;
   }
 }

@@ -1,6 +1,6 @@
 /**
  * Tool definitions for the agent runtime.
- * These are the core six tools plus task_done that replace Claude Code's built-in tools.
+ * Core filesystem/shell tools, git tools, web fetch, sub-agent spawning, and task_done.
  */
 
 import type { ToolDefinition } from "../types/index.js";
@@ -75,7 +75,7 @@ export const CORE_TOOLS: ToolDefinition[] = [
   {
     name: "run_command",
     description:
-      "Execute a shell command and return its stdout, stderr, and exit code. Use this for running tests, build commands, git operations, and other CLI tools. Commands run in the sandbox's working directory.",
+      "Execute a shell command and return its stdout, stderr, and exit code. Use this for running tests, build commands, and other CLI tools. Commands run in the sandbox's working directory.",
     inputSchema: {
       type: "object",
       properties: {
@@ -150,6 +150,194 @@ export const CORE_TOOLS: ToolDefinition[] = [
       },
     },
   },
+
+  // ─── Git Tools ──────────────────────────────────────────────────
+  {
+    name: "git_status",
+    description:
+      "Show the working tree status — staged, modified, and untracked files. Use this to understand the current state before committing.",
+    inputSchema: {
+      type: "object",
+      properties: {},
+    },
+  },
+  {
+    name: "git_diff",
+    description:
+      "Show changes in the working tree. By default shows unstaged changes. Use staged=true for staged changes, or provide a ref to diff against.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        staged: {
+          type: "boolean",
+          description: "Show staged (cached) changes instead of working tree changes",
+        },
+        ref: {
+          type: "string",
+          description: "Git ref to diff against (e.g. HEAD~1, main, a commit SHA)",
+        },
+        path: {
+          type: "string",
+          description: "Optional path to restrict the diff to a specific file or directory",
+        },
+      },
+    },
+  },
+  {
+    name: "git_commit",
+    description:
+      "Stage files and create a git commit. If no files are specified, stages all modified and new files. Always provide a clear, descriptive commit message.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        message: {
+          type: "string",
+          description: "The commit message. Should be descriptive and follow conventional commit style.",
+        },
+        files: {
+          type: "array",
+          items: { type: "string" },
+          description: "Optional list of files to stage before committing. If omitted, stages all changes.",
+        },
+      },
+      required: ["message"],
+    },
+  },
+  {
+    name: "git_log",
+    description:
+      "Show recent commit history. Returns commit hash, author, date, and message.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        count: {
+          type: "number",
+          description: "Number of commits to show (default: 10)",
+        },
+        oneline: {
+          type: "boolean",
+          description: "Show compact one-line format (default: true)",
+        },
+        ref: {
+          type: "string",
+          description: "Branch or ref to show history for (default: HEAD)",
+        },
+      },
+    },
+  },
+  {
+    name: "git_branch",
+    description:
+      "Create, switch, or list git branches. Use this to manage branches before making changes.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        action: {
+          type: "string",
+          enum: ["list", "create", "switch"],
+          description: "Branch operation: list, create, or switch",
+        },
+        name: {
+          type: "string",
+          description: "Branch name (required for create/switch)",
+        },
+      },
+      required: ["action"],
+    },
+  },
+  {
+    name: "create_pull_request",
+    description:
+      "Push the current branch to the remote and create a pull request. Requires git commits to exist on the branch. Returns the PR URL.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        title: {
+          type: "string",
+          description: "Pull request title",
+        },
+        body: {
+          type: "string",
+          description: "Pull request description/body in markdown",
+        },
+        base: {
+          type: "string",
+          description: "Base branch to merge into (default: main)",
+        },
+        draft: {
+          type: "boolean",
+          description: "Create as draft PR (default: false)",
+        },
+      },
+      required: ["title", "body"],
+    },
+  },
+
+  // ─── Web Tools ──────────────────────────────────────────────────
+  {
+    name: "web_fetch",
+    description:
+      "Fetch content from a URL and return it as text. Useful for reading documentation, API responses, or checking endpoints. HTML is returned as-is (agent should extract what it needs).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        url: {
+          type: "string",
+          description: "The URL to fetch",
+        },
+        method: {
+          type: "string",
+          enum: ["GET", "POST", "PUT", "DELETE", "PATCH"],
+          description: "HTTP method (default: GET)",
+        },
+        headers: {
+          type: "object",
+          description: "Optional HTTP headers as key-value pairs",
+        },
+        body: {
+          type: "string",
+          description: "Optional request body (for POST/PUT/PATCH)",
+        },
+        max_length: {
+          type: "number",
+          description: "Maximum response length in characters (default: 50000)",
+        },
+      },
+      required: ["url"],
+    },
+  },
+
+  // ─── Sub-Agent Tool ─────────────────────────────────────────────
+  {
+    name: "spawn_subagent",
+    description:
+      "Delegate a subtask to a separate agent that runs independently. The sub-agent gets its own conversation and can use a different model. Useful for parallelizing work or using a specialist model for a specific part of a task. Returns the sub-agent's summary and files changed.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        title: {
+          type: "string",
+          description: "Short title for the subtask",
+        },
+        description: {
+          type: "string",
+          description: "Detailed description of what the sub-agent should accomplish",
+        },
+        model_role: {
+          type: "string",
+          description:
+            'Model role to assign (e.g. "coder", "fast", "architect"). Defaults to "coder".',
+        },
+        max_iterations: {
+          type: "number",
+          description: "Maximum iterations for the sub-agent (default: 25)",
+        },
+      },
+      required: ["title", "description"],
+    },
+  },
+
+  // ─── Task Completion ────────────────────────────────────────────
   {
     name: "task_done",
     description:

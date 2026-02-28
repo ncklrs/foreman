@@ -5,36 +5,80 @@
  * - Role-based assignment (map roles to models)
  * - Fallback chains (ordered list if primary is unavailable)
  * - Task complexity scoring
+ * - Historical performance data (via PerformanceTracker)
+ * - Budget-aware cost caps
+ *
+ * Implements:
+ * - "Budget-Aware Model Routing with Hard Cost Caps" pattern
+ * - "Oracle and Worker Multi-Model Approach" pattern
+ * - "Failover-Aware Model Fallback" pattern
  */
 
 import type {
   AgentTask,
-  ForemanConfig,
   ModelConfig,
   RoutingConfig,
   RoutingDecision,
   TaskComplexity,
 } from "../types/index.js";
-import type { ModelProvider } from "../providers/base.js";
 import { ProviderRegistry } from "../providers/registry.js";
+import type { PerformanceTracker } from "./performance.js";
+
+export interface RouterOptions {
+  config: RoutingConfig;
+  models: Record<string, ModelConfig>;
+  registry: ProviderRegistry;
+  performanceTracker?: PerformanceTracker;
+  /** Maximum total cost in USD before switching to cheapest model. */
+  budgetCapUsd?: number;
+  /** Running total cost so far. Updated externally. */
+  currentSpendUsd?: number;
+}
 
 export class ModelRouter {
   private config: RoutingConfig;
   private models: Record<string, ModelConfig>;
   private registry: ProviderRegistry;
+  private performanceTracker: PerformanceTracker | null;
+  private budgetCapUsd: number;
+  private currentSpendUsd: number;
 
   constructor(
-    config: RoutingConfig,
-    models: Record<string, ModelConfig>,
-    registry: ProviderRegistry
+    configOrOptions: RoutingConfig | RouterOptions,
+    models?: Record<string, ModelConfig>,
+    registry?: ProviderRegistry
   ) {
-    this.config = config;
-    this.models = models;
-    this.registry = registry;
+    if (models && registry) {
+      // Legacy 3-arg constructor
+      this.config = configOrOptions as RoutingConfig;
+      this.models = models;
+      this.registry = registry;
+      this.performanceTracker = null;
+      this.budgetCapUsd = Infinity;
+      this.currentSpendUsd = 0;
+    } else {
+      const opts = configOrOptions as RouterOptions;
+      this.config = opts.config;
+      this.models = opts.models;
+      this.registry = opts.registry;
+      this.performanceTracker = opts.performanceTracker ?? null;
+      this.budgetCapUsd = opts.budgetCapUsd ?? Infinity;
+      this.currentSpendUsd = opts.currentSpendUsd ?? 0;
+    }
+  }
+
+  /** Update running spend for budget-aware routing. */
+  updateSpend(usd: number): void {
+    this.currentSpendUsd = usd;
   }
 
   /** Select the best model for a given task. */
   route(task: AgentTask): RoutingDecision {
+    // Budget cap: if we've exceeded budget, force cheapest available model
+    if (this.currentSpendUsd >= this.budgetCapUsd) {
+      return this.routeByCost(task, true);
+    }
+
     // If task has an explicit model assignment, use it
     if (task.assignedModel && this.models[task.assignedModel]) {
       const provider = this.registry.get(task.assignedModel);
@@ -45,6 +89,22 @@ export class ModelRouter {
           reason: `Explicitly assigned model: ${task.assignedModel}`,
           fallbacksAvailable: this.getAvailableFallbacks(task.assignedModel),
         };
+      }
+    }
+
+    // Performance-aware: if we have historical data for a matching label,
+    // prefer the historically best model for that label
+    if (this.performanceTracker && task.labels && task.labels.length > 0) {
+      for (const label of task.labels) {
+        const bestKey = this.performanceTracker.getBestModelForLabel(label);
+        if (bestKey && this.models[bestKey] && this.registry.isHealthy(bestKey)) {
+          return {
+            modelKey: bestKey,
+            modelConfig: this.models[bestKey],
+            reason: `Performance-optimized: best historical model for label "${label}"`,
+            fallbacksAvailable: this.getAvailableFallbacks(bestKey),
+          };
+        }
       }
     }
 
@@ -145,7 +205,7 @@ export class ModelRouter {
     return this.routeByFallback(task, complexity);
   }
 
-  private routeByCost(task: AgentTask): RoutingDecision {
+  private routeByCost(task: AgentTask, forceCheapest = false): RoutingDecision {
     const complexity = this.scoreComplexity(task);
 
     // Sort models by cost (cheapest first) and pick the first capable one
@@ -161,6 +221,16 @@ export class ModelRouter {
         const bCost = (b.cost?.inputTokenCostPer1M ?? 999) + (b.cost?.outputTokenCostPer1M ?? 999);
         return aCost - bCost;
       });
+
+    // If forcing cheapest (budget exceeded), skip capability check
+    if (forceCheapest && sorted.length > 0) {
+      return {
+        modelKey: sorted[0].key,
+        modelConfig: sorted[0].config,
+        reason: `Budget cap reached ($${this.currentSpendUsd.toFixed(2)}/$${this.budgetCapUsd.toFixed(2)}), using cheapest model`,
+        fallbacksAvailable: this.getAvailableFallbacks(sorted[0].key),
+      };
+    }
 
     // For complex tasks, filter out models that are too weak
     const minReasoningStrength = complexity.score >= 7 ? "high" : "medium";

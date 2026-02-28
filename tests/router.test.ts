@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { ModelRouter } from "../src/router/router.js";
+import { PerformanceTracker } from "../src/router/performance.js";
 import type { ModelConfig, RoutingConfig, AgentTask } from "../src/types/index.js";
 import { ProviderRegistry } from "../src/providers/registry.js";
 
@@ -217,5 +218,94 @@ describe("ModelRouter", () => {
     expect(decision.fallbacksAvailable).toContain("architect");
     expect(decision.fallbacksAvailable).toContain("fast");
     expect(decision.fallbacksAvailable).not.toContain("coder"); // current model excluded
+  });
+
+  it("routes by historical performance when labels match", () => {
+    const registry = createMockRegistry(defaultModels);
+    const tracker = new PerformanceTracker();
+
+    // Record 5 successful "bug" tasks on fast model
+    for (let i = 0; i < 5; i++) {
+      tracker.record({
+        modelKey: "fast",
+        taskId: `bug_${i}`,
+        success: true,
+        durationMs: 1000,
+        iterations: 2,
+        tokenUsage: { inputTokens: 100, outputTokens: 50 },
+        labels: ["bug"],
+      });
+    }
+
+    const router = new ModelRouter({
+      config: defaultRouting,
+      models: defaultModels,
+      registry,
+      performanceTracker: tracker,
+    });
+
+    const task: AgentTask = {
+      id: "1",
+      title: "Fix null pointer bug",
+      description: "Null pointer exception in user service when profile is missing",
+      labels: ["bug"],
+    };
+
+    const decision = router.route(task);
+    expect(decision.modelKey).toBe("fast");
+    expect(decision.reason).toContain("Performance-optimized");
+  });
+
+  it("forces cheapest model when budget cap exceeded", () => {
+    const registry = createMockRegistry(defaultModels);
+
+    const router = new ModelRouter({
+      config: defaultRouting,
+      models: defaultModels,
+      registry,
+      budgetCapUsd: 10.0,
+      currentSpendUsd: 15.0,
+    });
+
+    const task: AgentTask = {
+      id: "1",
+      title: "Complex refactor",
+      description: "A".repeat(3000),
+      labels: ["architecture"],
+      estimate: 8,
+    };
+
+    const decision = router.route(task);
+    expect(decision.modelKey).toBe("fast"); // cheapest
+    expect(decision.reason).toContain("Budget cap reached");
+  });
+
+  it("updateSpend triggers budget-aware routing", () => {
+    const registry = createMockRegistry(defaultModels);
+
+    const router = new ModelRouter({
+      config: defaultRouting,
+      models: defaultModels,
+      registry,
+      budgetCapUsd: 5.0,
+    });
+
+    const complexTask: AgentTask = {
+      id: "1",
+      title: "Complex task",
+      description: "A".repeat(3000),
+      labels: ["architecture"],
+      estimate: 8,
+    };
+
+    // Before budget exceeded
+    let decision = router.route(complexTask);
+    expect(decision.modelKey).toBe("architect");
+
+    // After budget exceeded
+    router.updateSpend(6.0);
+    decision = router.route(complexTask);
+    expect(decision.modelKey).toBe("fast");
+    expect(decision.reason).toContain("Budget cap");
   });
 });

@@ -15,6 +15,7 @@ import type {
   TokenUsage,
 } from "../types/index.js";
 import { BaseProvider } from "./base.js";
+import { withRetry } from "../utils/retry.js";
 
 interface AnthropicProviderOptions {
   apiKey: string;
@@ -125,25 +126,27 @@ export class AnthropicProvider extends BaseProvider {
   }
 
   async chat(request: ChatRequest): Promise<ChatResponse> {
-    const body = this.buildRequestBody(request);
+    return withRetry(async () => {
+      const body = this.buildRequestBody(request);
 
-    const response = await fetch(`${this.baseUrl}/v1/messages`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": this.apiKey,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify(body),
+      const response = await fetch(`${this.baseUrl}/v1/messages`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": this.apiKey,
+          "anthropic-version": "2023-06-01",
+        },
+        body: JSON.stringify(body),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Anthropic API error (${response.status}): ${errorText}`);
+      }
+
+      const data = (await response.json()) as AnthropicResponse;
+      return this.parseResponse(data);
     });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Anthropic API error (${response.status}): ${errorText}`);
-    }
-
-    const data = (await response.json()) as AnthropicResponse;
-    return this.parseResponse(data);
   }
 
   async *chatStream(request: ChatRequest): AsyncIterable<StreamEvent> {

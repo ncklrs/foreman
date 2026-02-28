@@ -63,13 +63,18 @@ export class Orchestrator {
   constructor(config: ForemanConfig) {
     this.config = config;
     this.registry = ProviderRegistry.fromConfig(config);
-    this.router = new ModelRouter(config.routing, config.models, this.registry);
+    this.performanceTracker = new PerformanceTracker();
+    this.router = new ModelRouter({
+      config: config.routing,
+      models: config.models,
+      registry: this.registry,
+      performanceTracker: this.performanceTracker,
+    });
     this.sandboxManager = new SandboxManager(config.sandbox);
     this.policyEngine = new PolicyEngine(config.policy);
     this.eventBus = new EventBus(2000);
     this.logger = new Logger(config.foreman.logLevel, config.foreman.name);
     this.sessionStore = new SessionStore();
-    this.performanceTracker = new PerformanceTracker();
   }
 
   async initialize(): Promise<void> {
@@ -261,6 +266,12 @@ export class Orchestrator {
       const session = await loop.run();
       this.sessions.set(session.id, session);
 
+      // Calculate cost from provider cost profile
+      const costProfile = provider.costProfile();
+      const costUsd =
+        (session.tokenUsage.inputTokens / 1_000_000) * costProfile.inputTokenCostPer1M +
+        (session.tokenUsage.outputTokens / 1_000_000) * costProfile.outputTokenCostPer1M;
+
       this.performanceTracker.record({
         modelKey: decision.modelKey,
         taskId: task.id,
@@ -268,8 +279,12 @@ export class Orchestrator {
         durationMs: Date.now() - startTime,
         iterations: session.iterations,
         tokenUsage: session.tokenUsage,
+        costUsd,
         labels: task.labels,
       });
+
+      // Update router with running spend for budget-aware routing
+      this.router.updateSpend(this.performanceTracker.getTotalSpend());
 
       const artifacts = await this.sandboxManager.release(sandbox.id, true);
       session.artifacts.push(...artifacts);

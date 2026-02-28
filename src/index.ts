@@ -72,6 +72,12 @@ export { Logger } from "./logging/logger.js";
 // Storage
 export { SessionStore } from "./storage/sessions.js";
 
+// Secrets
+export { SecretsManager } from "./secrets/manager.js";
+
+// Utils
+export { withRetry } from "./utils/retry.js";
+
 // Config
 export { loadConfig } from "./config/loader.js";
 
