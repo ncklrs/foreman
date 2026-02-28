@@ -38,6 +38,7 @@ import { RecoveryManager } from "./recovery.js";
 import { ToolResultCache } from "./cache.js";
 import { SubAgentSpawner } from "./subagent.js";
 import { generateId } from "../utils/id.js";
+import { withRetry } from "../utils/retry.js";
 
 interface AgentLoopOptions {
   task: AgentTask;
@@ -189,9 +190,15 @@ export class AgentLoop extends EventEmitter {
         let response: ChatResponse;
         try {
           if (this.useStreaming) {
-            response = await this.chatWithStreaming(chatRequest);
+            response = await withRetry(
+              () => this.chatWithStreaming(chatRequest),
+              { maxRetries: 2, initialDelayMs: 1000 }
+            );
           } else {
-            response = await this.provider.chat(chatRequest);
+            response = await withRetry(
+              () => this.provider.chat(chatRequest),
+              { maxRetries: 2, initialDelayMs: 1000 }
+            );
           }
         } catch (error) {
           // Model error — attempt recovery

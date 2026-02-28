@@ -353,6 +353,12 @@ export class HookHandler {
           old_string: input.old_string ?? "",
           new_string: input.new_string ?? "",
         };
+      case "Read":
+        return { path: input.file_path ?? input.path ?? "" };
+      case "Glob":
+        return { path: input.path ?? ".", pattern: input.pattern ?? "" };
+      case "Grep":
+        return { path: input.path ?? ".", pattern: input.pattern ?? "" };
       default:
         return input;
     }

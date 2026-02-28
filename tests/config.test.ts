@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { parseTOML } from "../src/config/loader.js";
+import { parseTOML, validateConfig } from "../src/config/loader.js";
+import type { ForemanConfig } from "../src/types/index.js";
 
 describe("TOML Parser", () => {
   it("parses basic key-value pairs", () => {
@@ -113,5 +114,93 @@ require_approval_above = 200
     const policy = result.policy as Record<string, unknown>;
     expect(policy.max_diff_lines).toBe(500);
     expect(policy.protected_paths).toEqual(["package.json", ".env*"]);
+  });
+});
+
+describe("Config Validation", () => {
+  function makeValidConfig(): ForemanConfig {
+    return {
+      foreman: {
+        name: "test",
+        logLevel: "info",
+        maxConcurrentAgents: 5,
+      },
+      models: {
+        coder: {
+          provider: "anthropic",
+          model: "claude-sonnet-4-5-20250929",
+          role: "code generation",
+          maxTokens: 4096,
+        },
+      },
+      routing: {
+        strategy: "capability_match",
+        fallbackChain: ["coder"],
+      },
+      sandbox: {
+        type: "local",
+        warmPool: 3,
+        timeoutMinutes: 30,
+        cleanup: "on_success",
+      },
+      policy: {
+        protectedPaths: [],
+        blockedCommands: [],
+        maxDiffLines: 500,
+        requireApprovalAbove: 200,
+      },
+    };
+  }
+
+  it("accepts a valid config", () => {
+    const config = makeValidConfig();
+    expect(() => validateConfig(config)).not.toThrow();
+  });
+
+  it("rejects invalid provider", () => {
+    const config = makeValidConfig();
+    (config.models.coder as Record<string, unknown>).provider = "invalid_provider";
+    expect(() => validateConfig(config)).toThrow("Invalid foreman configuration");
+  });
+
+  it("rejects invalid log level", () => {
+    const config = makeValidConfig();
+    (config.foreman as Record<string, unknown>).logLevel = "verbose";
+    expect(() => validateConfig(config)).toThrow("Invalid foreman configuration");
+  });
+
+  it("rejects negative maxConcurrentAgents", () => {
+    const config = makeValidConfig();
+    config.foreman.maxConcurrentAgents = -1;
+    expect(() => validateConfig(config)).toThrow("Invalid foreman configuration");
+  });
+
+  it("rejects empty model name", () => {
+    const config = makeValidConfig();
+    config.models.coder.model = "";
+    expect(() => validateConfig(config)).toThrow("Invalid foreman configuration");
+  });
+
+  it("rejects invalid sandbox type", () => {
+    const config = makeValidConfig();
+    (config.sandbox as Record<string, unknown>).type = "aws";
+    expect(() => validateConfig(config)).toThrow("Invalid foreman configuration");
+  });
+
+  it("rejects invalid routing strategy", () => {
+    const config = makeValidConfig();
+    (config.routing as Record<string, unknown>).strategy = "random";
+    expect(() => validateConfig(config)).toThrow("Invalid foreman configuration");
+  });
+
+  it("rejects port out of range", () => {
+    const config = makeValidConfig();
+    config.api = {
+      enabled: true,
+      port: 99999,
+      host: "127.0.0.1",
+      corsOrigins: ["*"],
+    };
+    expect(() => validateConfig(config)).toThrow("Invalid foreman configuration");
   });
 });

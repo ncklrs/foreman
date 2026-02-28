@@ -42,6 +42,13 @@ import { MultiAgentExecutor } from "./orchestration/executor.js";
 
 type ApprovalHandler = (evaluation: PolicyEvaluation, session: AgentSession) => Promise<boolean>;
 
+/** Best-effort async call — logs warning on failure instead of silently swallowing. */
+function bestEffort(promise: Promise<unknown>, logger: Logger, context: string): Promise<void> {
+  return promise.catch((err: unknown) => {
+    logger.warn(`${context}: ${err instanceof Error ? err.message : String(err)}`);
+  }) as Promise<void>;
+}
+
 export class Orchestrator {
   private config: ForemanConfig;
   private registry: ProviderRegistry;
@@ -295,15 +302,18 @@ export class Orchestrator {
     });
 
     if (task.linearTicketId && this.linearClient) {
-      await this.linearClient.updateStatus(task.linearTicketId, "In Progress").catch(() => {});
+      await bestEffort(
+        this.linearClient.updateStatus(task.linearTicketId, "In Progress"),
+        this.logger, "Linear status update"
+      );
     }
 
     // Mark GitHub issue as in-progress
     if (task.id.startsWith("gh_") && this.githubClient) {
       const issueNumber = parseInt(task.title.match(/#(\d+)/)?.[1] ?? "0");
       if (issueNumber > 0) {
-        await this.githubClient.addLabels(issueNumber, ["agent-working"]).catch(() => {});
-        await this.githubClient.removeLabel(issueNumber, "agent-ready").catch(() => {});
+        await bestEffort(this.githubClient.addLabels(issueNumber, ["agent-working"]), this.logger, "GitHub add label");
+        await bestEffort(this.githubClient.removeLabel(issueNumber, "agent-ready"), this.logger, "GitHub remove label");
       }
     }
 
@@ -313,7 +323,7 @@ export class Orchestrator {
       const channel = parts[1];
       const ts = parts[2];
       if (channel && ts) {
-        await this.slackClient.addReaction(channel, ts, "eyes").catch(() => {});
+        await bestEffort(this.slackClient.addReaction(channel, ts, "eyes"), this.logger, "Slack reaction");
       }
     }
 
@@ -540,24 +550,25 @@ export class Orchestrator {
 
     if (task.linearTicketId && this.linearClient) {
       if (session.status === "completed") {
-        await this.linearClient.updateStatus(task.linearTicketId, "In Review").catch(() => {});
-        await this.linearClient.addComment(task.linearTicketId, summary).catch(() => {});
+        await bestEffort(this.linearClient.updateStatus(task.linearTicketId, "In Review"), this.logger, "Linear status update");
+        await bestEffort(this.linearClient.addComment(task.linearTicketId, summary), this.logger, "Linear comment");
       } else if (session.status === "failed") {
-        await this.linearClient.addComment(
-          task.linearTicketId, `${summary}\nError: ${session.error}`
-        ).catch(() => {});
+        await bestEffort(
+          this.linearClient.addComment(task.linearTicketId, `${summary}\nError: ${session.error}`),
+          this.logger, "Linear comment"
+        );
       }
     }
 
     if (task.id.startsWith("gh_") && this.githubClient) {
       const issueNumber = parseInt(task.title.match(/#(\d+)/)?.[1] ?? "0");
       if (issueNumber > 0) {
-        await this.githubClient.addComment(issueNumber, summary).catch(() => {});
-        await this.githubClient.removeLabel(issueNumber, "agent-working").catch(() => {});
+        await bestEffort(this.githubClient.addComment(issueNumber, summary), this.logger, "GitHub comment");
+        await bestEffort(this.githubClient.removeLabel(issueNumber, "agent-working"), this.logger, "GitHub remove label");
         if (session.status === "completed") {
-          await this.githubClient.addLabels(issueNumber, ["agent-completed"]).catch(() => {});
+          await bestEffort(this.githubClient.addLabels(issueNumber, ["agent-completed"]), this.logger, "GitHub add label");
         } else if (session.status === "failed") {
-          await this.githubClient.addLabels(issueNumber, ["agent-failed"]).catch(() => {});
+          await bestEffort(this.githubClient.addLabels(issueNumber, ["agent-failed"]), this.logger, "GitHub add label");
         }
       }
     }
@@ -567,10 +578,10 @@ export class Orchestrator {
       const channel = parts[1];
       const ts = parts[2];
       if (channel) {
-        await this.slackClient.postMessage(channel, summary, ts).catch(() => {});
+        await bestEffort(this.slackClient.postMessage(channel, summary, ts), this.logger, "Slack message");
         if (ts) {
           const emoji = session.status === "completed" ? "white_check_mark" : "x";
-          await this.slackClient.addReaction(channel, ts, emoji).catch(() => {});
+          await bestEffort(this.slackClient.addReaction(channel, ts, emoji), this.logger, "Slack reaction");
         }
       }
     }

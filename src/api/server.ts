@@ -12,7 +12,7 @@ import { Logger } from "../logging/logger.js";
 import { createRouter, type Route } from "./router.js";
 import { buildHandlers, buildHookHandlers } from "./handlers.js";
 import { WebSocketServer } from "./websocket.js";
-import { authMiddleware, corsMiddleware, type ApiConfig } from "./middleware.js";
+import { authMiddleware, corsMiddleware, securityHeaders, type ApiConfig } from "./middleware.js";
 import type { HookHandler } from "../hooks/handler.js";
 
 export interface ApiServerOptions {
@@ -114,6 +114,9 @@ export class ApiServer {
 
   private async handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const startTime = Date.now();
+
+    // Security headers
+    securityHeaders(res);
 
     // CORS
     corsMiddleware(req, res, this.config);

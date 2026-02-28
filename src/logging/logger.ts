@@ -89,10 +89,14 @@ export class Logger {
     }
   }
 
+  private static readonly SENSITIVE_KEYS = /apikey|api_key|token|password|secret|credential/i;
+
   private sanitize(data: Record<string, unknown>): Record<string, unknown> {
     const result: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(data)) {
-      if (value instanceof Error) {
+      if (Logger.SENSITIVE_KEYS.test(key) && typeof value === "string") {
+        result[key] = "[REDACTED]";
+      } else if (value instanceof Error) {
         result[key] = { message: value.message, stack: value.stack };
       } else if (typeof value === "bigint") {
         result[key] = value.toString();

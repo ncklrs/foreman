@@ -101,7 +101,7 @@ export { withRetry } from "./utils/retry.js";
 export { generateId } from "./utils/id.js";
 
 // Config
-export { loadConfig } from "./config/loader.js";
+export { loadConfig, validateConfig } from "./config/loader.js";
 
 // Autopilot
 export { AutopilotEngine, AutopilotScheduler, CodebaseReviewer, TicketCreator } from "./autopilot/index.js";

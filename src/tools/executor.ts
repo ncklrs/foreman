@@ -91,10 +91,13 @@ export class ToolExecutor {
   }
 
   private resolvePath(inputPath: string): string {
-    if (inputPath.startsWith("/")) {
-      return inputPath;
+    const resolved = resolve(this.workingDir, inputPath);
+    // Prevent path traversal outside working directory
+    const rel = relative(this.workingDir, resolved);
+    if (rel.startsWith("..") || resolve(this.workingDir, rel) !== resolved) {
+      throw new Error(`Path traversal denied: ${inputPath} resolves outside working directory`);
     }
-    return resolve(this.workingDir, inputPath);
+    return resolved;
   }
 
   private async readFile(input: Record<string, unknown>): Promise<string> {

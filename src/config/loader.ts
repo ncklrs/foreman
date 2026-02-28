@@ -5,7 +5,108 @@
 import { readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
+import { z } from "zod";
 import type { ApiConfig, AutopilotConfig, AutopilotScanner, ForemanConfig, GitHubIntegrationConfig, ModelConfig, PolicyConfig, RoutingConfig, SandboxConfig, SlackIntegrationConfig } from "../types/index.js";
+
+// ─── Zod Schemas for config validation ─────────────────────────
+
+const ModelConfigSchema = z.object({
+  provider: z.enum(["anthropic", "openai", "local"]),
+  model: z.string().min(1, "model name is required"),
+  role: z.string(),
+  maxTokens: z.number().int().positive().max(1_000_000),
+  temperature: z.number().min(0).max(2).optional(),
+  endpoint: z.string().optional(),
+  apiKey: z.string().optional(),
+});
+
+const ForemanConfigSchema = z.object({
+  foreman: z.object({
+    name: z.string().min(1),
+    logLevel: z.enum(["debug", "info", "warn", "error"]),
+    maxConcurrentAgents: z.number().int().positive().max(100),
+    runtime: z.enum(["foreman", "claude-code"]).optional(),
+    decompose: z.boolean().optional(),
+    decomposeThreshold: z.number().int().min(1).max(10).optional(),
+  }),
+  models: z.record(z.string(), ModelConfigSchema),
+  routing: z.object({
+    strategy: z.enum(["capability_match", "cost_optimized", "speed_first"]),
+    fallbackChain: z.array(z.string()),
+  }),
+  sandbox: z.object({
+    type: z.enum(["docker", "local"]),
+    warmPool: z.number().int().min(0).max(50),
+    timeoutMinutes: z.number().positive().max(1440),
+    cleanup: z.enum(["on_success", "always", "never"]),
+    cloud: z.object({
+      provider: z.enum(["fly", "daytona"]),
+      app: z.string(),
+      region: z.string(),
+    }).optional(),
+  }),
+  policy: z.object({
+    protectedPaths: z.array(z.string()),
+    blockedCommands: z.array(z.string()),
+    maxDiffLines: z.number().int().positive(),
+    requireApprovalAbove: z.number().int().min(0),
+  }),
+  linear: z.object({
+    apiKey: z.string().min(1),
+    team: z.string().min(1),
+    watchLabels: z.array(z.string()),
+    watchStatus: z.string(),
+  }).optional(),
+  github: z.object({
+    token: z.string().min(1),
+    owner: z.string().min(1),
+    repo: z.string().min(1),
+    watchLabels: z.array(z.string()),
+    watchState: z.enum(["open", "closed", "all"]).optional(),
+  }).optional(),
+  slack: z.object({
+    botToken: z.string().min(1),
+    watchChannels: z.array(z.string()).min(1),
+    triggerPrefix: z.string().optional(),
+    postProgress: z.boolean().optional(),
+  }).optional(),
+  autopilot: z.object({
+    enabled: z.boolean(),
+    schedule: z.string(),
+    timezone: z.string().optional(),
+    scanners: z.array(z.enum([
+      "security", "dependencies", "code_quality", "test_coverage",
+      "performance", "documentation", "dead_code", "type_safety",
+    ])),
+    maxTicketsPerRun: z.number().int().positive(),
+    autoResolve: z.boolean(),
+    maxConcurrentResolves: z.number().int().positive(),
+    minSeverity: z.number().int().min(1).max(5),
+    ticketTarget: z.enum(["github", "linear"]),
+    ticketLabels: z.array(z.string()),
+    branchPrefix: z.string(),
+    workingDir: z.string().optional(),
+  }).optional(),
+  api: z.object({
+    enabled: z.boolean(),
+    port: z.number().int().min(1).max(65535),
+    host: z.string(),
+    apiKey: z.string().optional(),
+    corsOrigins: z.array(z.string()),
+  }).optional(),
+});
+
+/** Validate a normalized config against the Zod schema. Throws on invalid. */
+export function validateConfig(config: ForemanConfig): ForemanConfig {
+  const result = ForemanConfigSchema.safeParse(config);
+  if (!result.success) {
+    const issues = result.error.issues.map(
+      (i) => `  - ${i.path.join(".")}: ${i.message}`
+    ).join("\n");
+    throw new Error(`Invalid foreman configuration:\n${issues}`);
+  }
+  return config;
+}
 
 // We parse TOML manually to avoid runtime dependency issues.
 // For a production build we'd use @iarna/toml, but this parser handles
@@ -21,7 +122,8 @@ export async function loadConfig(configPath?: string): Promise<ForemanConfig> {
 
   const raw = await readFile(path, "utf-8");
   const parsed = parseTOML(raw);
-  return normalizeConfig(parsed);
+  const config = normalizeConfig(parsed);
+  return validateConfig(config);
 }
 
 function findConfigFile(): string | null {
