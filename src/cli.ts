@@ -237,6 +237,15 @@ async function main(): Promise<void> {
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
 
+  process.on("unhandledRejection", (reason) => {
+    console.error("Unhandled promise rejection:", reason);
+  });
+
+  process.on("uncaughtException", (error) => {
+    console.error("Uncaught exception:", error);
+    shutdown();
+  });
+
   // Initialize
   await orchestrator.initialize();
 

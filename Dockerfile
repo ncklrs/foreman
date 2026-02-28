@@ -34,4 +34,4 @@ ENV NODE_ENV=production
 EXPOSE 8080
 
 ENTRYPOINT ["node", "dist/cli.js"]
-CMD ["--watch", "--no-tui"]
+CMD ["--watch", "--no-tui", "--api", "--api-port", "8080"]

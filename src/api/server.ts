@@ -12,7 +12,7 @@ import { Logger } from "../logging/logger.js";
 import { createRouter, type Route } from "./router.js";
 import { buildHandlers, buildHookHandlers } from "./handlers.js";
 import { WebSocketServer } from "./websocket.js";
-import { authMiddleware, corsMiddleware, type ApiConfig } from "./middleware.js";
+import { authMiddleware, corsMiddleware, RateLimiter, type ApiConfig } from "./middleware.js";
 import type { HookHandler } from "../hooks/handler.js";
 
 export interface ApiServerOptions {
@@ -30,6 +30,8 @@ export class ApiServer {
   private config: ApiConfig;
   private logger: Logger;
   private routes: Route[];
+  private rateLimiter: RateLimiter | null = null;
+  private rateLimitCleanupTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(options: ApiServerOptions) {
     this.orchestrator = options.orchestrator;
@@ -47,6 +49,12 @@ export class ApiServer {
     }
 
     this.routes = createRouter(handlers);
+
+    // Initialize rate limiter if enabled (default: on)
+    if (this.config.rateLimit !== false) {
+      this.rateLimiter = new RateLimiter(this.config.rateLimitRpm ?? 120);
+      this.rateLimitCleanupTimer = setInterval(() => this.rateLimiter?.cleanup(), 60_000);
+    }
   }
 
   /** Start the HTTP server. */
@@ -92,6 +100,10 @@ export class ApiServer {
   /** Stop the HTTP server. */
   async stop(): Promise<void> {
     this.wsServer.closeAll();
+    if (this.rateLimitCleanupTimer) {
+      clearInterval(this.rateLimitCleanupTimer);
+      this.rateLimitCleanupTimer = null;
+    }
 
     return new Promise((resolve) => {
       if (this.server) {
@@ -129,6 +141,16 @@ export class ApiServer {
       return;
     }
 
+    // Rate limiting
+    if (this.rateLimiter) {
+      const ip = req.socket.remoteAddress ?? "unknown";
+      if (!this.rateLimiter.check(ip)) {
+        res.setHeader("Retry-After", "60");
+        this.sendJson(res, 429, { error: "Too Many Requests" });
+        return;
+      }
+    }
+
     const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
     const method = req.method ?? "GET";
     const path = url.pathname;
@@ -157,7 +179,6 @@ export class ApiServer {
           });
           this.sendJson(res, 500, {
             error: "Internal Server Error",
-            message: error instanceof Error ? error.message : "Unknown error",
           });
         }
 
