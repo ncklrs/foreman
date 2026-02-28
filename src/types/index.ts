@@ -141,6 +141,8 @@ export interface ForemanGlobalConfig {
   name: string;
   logLevel: "debug" | "info" | "warn" | "error";
   maxConcurrentAgents: number;
+  /** Agent runtime: "foreman" (built-in) or "claude-code" (Claude Code CLI). */
+  runtime?: "foreman" | "claude-code";
 }
 
 export interface LinearConfig {

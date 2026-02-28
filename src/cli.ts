@@ -22,6 +22,7 @@ interface CliArgs {
   autopilotOnce?: boolean;
   api?: boolean;
   apiPort?: number;
+  runtime?: string;
   help?: boolean;
 }
 
@@ -71,6 +72,9 @@ function parseArgs(argv: string[]): CliArgs {
       case "--api-port":
         args.apiPort = parseInt(argv[++i]);
         break;
+      case "--runtime":
+        args.runtime = argv[++i];
+        break;
       case "--help":
       case "-h":
         args.help = true;
@@ -107,6 +111,7 @@ OPTIONS
       --autopilot-once       Run one autopilot scan immediately, then exit
       --api                  Enable HTTP API server
       --api-port <port>      API server port (default: 4820)
+      --runtime <type>       Agent runtime: "foreman" (default) or "claude-code"
   -h, --help                 Show this help message
 
 EXAMPLES
@@ -148,6 +153,11 @@ async function main(): Promise<void> {
       console.error('Run "foreman --help" for usage information.');
       process.exit(1);
     }
+  }
+
+  // Apply runtime override from CLI flag
+  if (args.runtime === "claude-code" || args.runtime === "foreman") {
+    config.foreman.runtime = args.runtime;
   }
 
   // Create orchestrator

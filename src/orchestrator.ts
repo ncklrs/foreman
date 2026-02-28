@@ -22,6 +22,7 @@ import { ProviderRegistry } from "./providers/registry.js";
 import { ModelRouter } from "./router/router.js";
 import { SandboxManager } from "./sandbox/manager.js";
 import { AgentLoop } from "./runtime/loop.js";
+import { ClaudeCodeRunner } from "./runtime/adapters/claude-code.js";
 import { PolicyEngine } from "./policy/engine.js";
 import { EventBus } from "./events/bus.js";
 import { Logger } from "./logging/logger.js";
@@ -306,33 +307,52 @@ export class Orchestrator {
     // Build prompt enrichment from learning system
     const enrichment = await this.buildEnrichment(task);
 
-    const approvalHandler = this.approvalHandler;
-    let loopRef: AgentLoop | null = null;
+    // Choose runtime: Claude Code CLI or built-in AgentLoop
+    const useClaudeCode = this.config.foreman.runtime === "claude-code";
+    let runner: { getSession(): AgentSession; run(): Promise<AgentSession>; abort(): void };
 
-    const loop: AgentLoop = new AgentLoop({
-      task,
-      provider,
-      config: this.config,
-      workingDir: sandbox.workingDir,
-      summarizationProvider,
-      registry: this.registry,
-      useStreaming: true,
-      onEvent: (event) => this.eventBus.emit(event),
-      onApprovalRequired: approvalHandler
-        ? async (evaluation) => approvalHandler(evaluation, loopRef!.getSession())
-        : undefined,
-      promptEnrichment: enrichment,
-    });
-    loopRef = loop;
+    if (useClaudeCode) {
+      const modelConfig = this.config.models[decision.modelKey];
+      const ccRunner = new ClaudeCodeRunner({
+        task,
+        config: this.config,
+        workingDir: sandbox.workingDir,
+        model: modelConfig?.model,
+        maxTurns: 50,
+        promptEnrichment: enrichment,
+        onEvent: (event) => this.eventBus.emit(event),
+        dangerouslyAutoApprove: true,
+      });
+      runner = ccRunner;
+    } else {
+      const approvalHandler = this.approvalHandler;
+      let loopRef: AgentLoop | null = null;
+      const loop = new AgentLoop({
+        task,
+        provider,
+        config: this.config,
+        workingDir: sandbox.workingDir,
+        summarizationProvider,
+        registry: this.registry,
+        useStreaming: true,
+        onEvent: (event) => this.eventBus.emit(event),
+        onApprovalRequired: approvalHandler
+          ? async (evaluation) => approvalHandler(evaluation, loopRef!.getSession())
+          : undefined,
+        promptEnrichment: enrichment,
+      });
+      loopRef = loop;
+      runner = loop;
+    }
 
-    const sessionId = loop.getSession().id;
-    this.activeLoops.set(sessionId, loop);
-    this.sessions.set(sessionId, loop.getSession());
+    const sessionId = runner.getSession().id;
+    this.activeLoops.set(sessionId, runner as AgentLoop);
+    this.sessions.set(sessionId, runner.getSession());
 
     const startTime = Date.now();
 
     try {
-      const session = await loop.run();
+      const session = await runner.run();
       this.sessions.set(session.id, session);
 
       // Calculate cost from provider cost profile

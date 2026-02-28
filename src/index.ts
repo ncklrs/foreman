@@ -45,6 +45,7 @@ export { ContextManager } from "./runtime/context.js";
 export { RecoveryManager } from "./runtime/recovery.js";
 export { ToolResultCache } from "./runtime/cache.js";
 export { SubAgentSpawner } from "./runtime/subagent.js";
+export { ClaudeCodeRunner } from "./runtime/adapters/claude-code.js";
 
 // Tools
 export { CORE_TOOLS } from "./tools/definitions.js";

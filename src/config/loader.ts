@@ -57,6 +57,7 @@ function normalizeConfig(raw: Record<string, unknown>): ForemanConfig {
       name: resolveValue(String(foreman?.name ?? "foreman")),
       logLevel: (foreman?.log_level as ForemanConfig["foreman"]["logLevel"]) ?? "info",
       maxConcurrentAgents: Number(foreman?.max_concurrent_agents ?? 10),
+      runtime: (foreman?.runtime as "foreman" | "claude-code") ?? undefined,
     },
     linear: linear
       ? {
