@@ -101,6 +101,7 @@ export interface ForemanConfig {
   linear?: LinearConfig;
   github?: GitHubIntegrationConfig;
   slack?: SlackIntegrationConfig;
+  autopilot?: AutopilotConfig;
   models: Record<string, ModelConfig>;
   routing: RoutingConfig;
   sandbox: SandboxConfig;
@@ -241,6 +242,69 @@ export interface RoutingDecision {
   fallbacksAvailable: string[];
 }
 
+// ─── Autopilot Types ──────────────────────────────────────────────
+
+export interface AutopilotConfig {
+  /** Whether autopilot is enabled. */
+  enabled: boolean;
+  /** Cron expression for review schedule (e.g., "0 9 * * 1-5"). */
+  schedule: string;
+  /** Timezone for schedule (default: "UTC"). */
+  timezone?: string;
+  /** Which review scanners to run. */
+  scanners: AutopilotScanner[];
+  /** Maximum tickets to create per run. */
+  maxTicketsPerRun: number;
+  /** Whether to auto-resolve created tickets (vs. just creating them). */
+  autoResolve: boolean;
+  /** Maximum concurrent resolve agents. */
+  maxConcurrentResolves: number;
+  /** Minimum severity to create a ticket (1-5, 1=info, 5=critical). */
+  minSeverity: number;
+  /** Target for created tickets: "github" or "linear". */
+  ticketTarget: "github" | "linear";
+  /** Labels to add to auto-created tickets. */
+  ticketLabels: string[];
+  /** Branch prefix for auto-resolve work (default: "autopilot/"). */
+  branchPrefix: string;
+  /** Working directory to scan (default: "."). */
+  workingDir?: string;
+}
+
+export type AutopilotScanner =
+  | "security"
+  | "dependencies"
+  | "code_quality"
+  | "test_coverage"
+  | "performance"
+  | "documentation"
+  | "dead_code"
+  | "type_safety";
+
+export interface ReviewFinding {
+  id: string;
+  scanner: AutopilotScanner;
+  severity: number; // 1-5
+  title: string;
+  description: string;
+  filePath?: string;
+  lineNumber?: number;
+  suggestion: string;
+  effort: "trivial" | "small" | "medium" | "large";
+  tags: string[];
+}
+
+export interface AutopilotRun {
+  id: string;
+  startedAt: Date;
+  completedAt?: Date;
+  status: "scanning" | "creating_tickets" | "resolving" | "completed" | "failed";
+  findings: ReviewFinding[];
+  ticketsCreated: string[];
+  ticketsResolved: string[];
+  error?: string;
+}
+
 // ─── Event Types ──────────────────────────────────────────────────
 
 export type ForemanEvent =
@@ -254,4 +318,10 @@ export type ForemanEvent =
   | { type: "agent:approval_required"; session: AgentSession; evaluation: PolicyEvaluation }
   | { type: "provider:health_changed"; providerName: string; health: ProviderHealth }
   | { type: "task:queued"; task: AgentTask }
-  | { type: "task:assigned"; task: AgentTask; modelKey: string };
+  | { type: "task:assigned"; task: AgentTask; modelKey: string }
+  | { type: "autopilot:run_started"; run: AutopilotRun }
+  | { type: "autopilot:scan_complete"; run: AutopilotRun; findingsCount: number }
+  | { type: "autopilot:ticket_created"; run: AutopilotRun; finding: ReviewFinding; ticketId: string }
+  | { type: "autopilot:resolve_started"; run: AutopilotRun; finding: ReviewFinding }
+  | { type: "autopilot:resolve_completed"; run: AutopilotRun; finding: ReviewFinding; success: boolean }
+  | { type: "autopilot:run_completed"; run: AutopilotRun };

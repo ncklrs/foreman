@@ -5,7 +5,7 @@
 import { readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
-import type { ForemanConfig, GitHubIntegrationConfig, ModelConfig, PolicyConfig, RoutingConfig, SandboxConfig, SlackIntegrationConfig } from "../types/index.js";
+import type { AutopilotConfig, AutopilotScanner, ForemanConfig, GitHubIntegrationConfig, ModelConfig, PolicyConfig, RoutingConfig, SandboxConfig, SlackIntegrationConfig } from "../types/index.js";
 
 // We parse TOML manually to avoid runtime dependency issues.
 // For a production build we'd use @iarna/toml, but this parser handles
@@ -45,6 +45,7 @@ function normalizeConfig(raw: Record<string, unknown>): ForemanConfig {
   const linear = raw.linear as Record<string, unknown> | undefined;
   const github = raw.github as Record<string, unknown> | undefined;
   const slack = raw.slack as Record<string, unknown> | undefined;
+  const autopilot = raw.autopilot as Record<string, unknown> | undefined;
   const models = raw.models as Record<string, Record<string, unknown>> | undefined;
   const routing = raw.routing as Record<string, unknown> | undefined;
   const sandbox = raw.sandbox as Record<string, unknown> | undefined;
@@ -66,6 +67,7 @@ function normalizeConfig(raw: Record<string, unknown>): ForemanConfig {
       : undefined,
     github: normalizeGitHub(github),
     slack: normalizeSlack(slack),
+    autopilot: normalizeAutopilot(autopilot),
     models: normalizeModels(models ?? {}),
     routing: normalizeRouting(routing),
     sandbox: normalizeSandbox(sandbox),
@@ -136,6 +138,35 @@ function normalizeSandbox(raw?: Record<string, unknown>): SandboxConfig {
           region: String(cloud.region ?? "iad"),
         }
       : undefined,
+  };
+}
+
+function normalizeAutopilot(raw?: Record<string, unknown>): AutopilotConfig | undefined {
+  if (!raw) return undefined;
+
+  const validScanners: AutopilotScanner[] = [
+    "security", "dependencies", "code_quality", "test_coverage",
+    "performance", "documentation", "dead_code", "type_safety",
+  ];
+
+  const rawScanners = (raw.scanners as string[]) ?? ["code_quality", "security"];
+  const scanners = rawScanners.filter((s): s is AutopilotScanner =>
+    validScanners.includes(s as AutopilotScanner)
+  );
+
+  return {
+    enabled: raw.enabled !== false,
+    schedule: String(raw.schedule ?? "0 9 * * 1-5"),
+    timezone: raw.timezone ? String(raw.timezone) : "UTC",
+    scanners: scanners.length > 0 ? scanners : ["code_quality", "security"],
+    maxTicketsPerRun: Number(raw.max_tickets_per_run ?? 5),
+    autoResolve: raw.auto_resolve === true,
+    maxConcurrentResolves: Number(raw.max_concurrent_resolves ?? 2),
+    minSeverity: Number(raw.min_severity ?? 3),
+    ticketTarget: (raw.ticket_target as "github" | "linear") ?? "github",
+    ticketLabels: (raw.ticket_labels as string[]) ?? ["autopilot"],
+    branchPrefix: String(raw.branch_prefix ?? "autopilot/"),
+    workingDir: raw.working_dir ? String(raw.working_dir) : undefined,
   };
 }
 

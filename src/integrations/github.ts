@@ -105,6 +105,22 @@ export class GitHubClient {
     );
   }
 
+  /** Create a new issue. */
+  async createIssue(
+    title: string,
+    body: string,
+    labels: string[] = []
+  ): Promise<{ id: number; number: number; html_url: string }> {
+    const url = `${this.baseUrl}/repos/${this.config.owner}/${this.config.repo}/issues`;
+
+    const response = await this.request(url, {
+      method: "POST",
+      body: JSON.stringify({ title, body, labels }),
+    });
+
+    return (await response.json()) as { id: number; number: number; html_url: string };
+  }
+
   private issueToTask(issue: GitHubIssue): AgentTask {
     return {
       id: `gh_${issue.id}`,

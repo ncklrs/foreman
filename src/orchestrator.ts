@@ -31,6 +31,7 @@ import { GitHubWatcher, GitHubClient } from "./integrations/github.js";
 import { SlackWatcher, SlackClient } from "./integrations/slack.js";
 import { SessionStore } from "./storage/sessions.js";
 import { PerformanceTracker } from "./router/performance.js";
+import { AutopilotEngine } from "./autopilot/engine.js";
 
 type ApprovalHandler = (evaluation: PolicyEvaluation, session: AgentSession) => Promise<boolean>;
 
@@ -51,6 +52,7 @@ export class Orchestrator {
   private githubClient: GitHubClient | null = null;
   private slackWatcher: SlackWatcher | null = null;
   private slackClient: SlackClient | null = null;
+  private autopilotEngine: AutopilotEngine | null = null;
 
   private sessions: Map<string, AgentSession> = new Map();
   private activeLoops: Map<string, AgentLoop> = new Map();
@@ -127,6 +129,24 @@ export class Orchestrator {
       });
     }
 
+    if (this.config.autopilot?.enabled) {
+      this.autopilotEngine = new AutopilotEngine({
+        config: this.config,
+        autopilotConfig: this.config.autopilot,
+        registry: this.registry,
+        eventBus: this.eventBus,
+        logger: this.logger,
+        githubClient: this.githubClient,
+        linearClient: this.linearClient,
+        onEnqueueTask: (task) => this.enqueueTask(task, "autopilot"),
+      });
+      this.logger.info("Autopilot configured", {
+        schedule: this.config.autopilot.schedule,
+        scanners: this.config.autopilot.scanners,
+        autoResolve: this.config.autopilot.autoResolve,
+      });
+    }
+
     const restored = await this.sessionStore.loadAll();
     if (restored.length > 0) {
       this.logger.info(`Restored ${restored.length} session(s) from disk`);
@@ -143,6 +163,7 @@ export class Orchestrator {
     this.linearWatcher?.start();
     this.githubWatcher?.start();
     this.slackWatcher?.start();
+    this.autopilotEngine?.start();
 
     this.healthCheckInterval = setInterval(async () => {
       this.providerHealth = await this.registry.healthCheckAll();
@@ -162,6 +183,7 @@ export class Orchestrator {
     this.linearWatcher?.stop();
     this.githubWatcher?.stop();
     this.slackWatcher?.stop();
+    this.autopilotEngine?.stop();
 
     if (this.healthCheckInterval) {
       clearInterval(this.healthCheckInterval);
@@ -199,6 +221,7 @@ export class Orchestrator {
   getConfig(): ForemanConfig { return this.config; }
   getPerformanceStats() { return this.performanceTracker.getStats(); }
   getLogger(): Logger { return this.logger; }
+  getAutopilotEngine(): AutopilotEngine | null { return this.autopilotEngine; }
 
   private processQueue(): void {
     if (!this.running) return;

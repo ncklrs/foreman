@@ -24,6 +24,10 @@ export type {
   ForemanEvent,
   GitHubIntegrationConfig,
   SlackIntegrationConfig,
+  AutopilotConfig,
+  AutopilotScanner,
+  ReviewFinding,
+  AutopilotRun,
 } from "./types/index.js";
 
 // Provider layer
@@ -80,6 +84,9 @@ export { withRetry } from "./utils/retry.js";
 
 // Config
 export { loadConfig } from "./config/loader.js";
+
+// Autopilot
+export { AutopilotEngine, AutopilotScheduler, CodebaseReviewer, TicketCreator } from "./autopilot/index.js";
 
 // Orchestrator
 export { Orchestrator } from "./orchestrator.js";

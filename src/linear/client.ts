@@ -123,12 +123,61 @@ export class LinearClient {
     await this.graphql(mutation);
   }
 
+  /** Create a new issue/ticket. */
+  async createIssue(
+    title: string,
+    body: string,
+    _labelNames: string[] = [],
+    estimate?: number
+  ): Promise<string> {
+    const teamId = await this.resolveTeamId();
+
+    const inputParts = [
+      `title: ${JSON.stringify(title)}`,
+      `description: ${JSON.stringify(body)}`,
+      `teamId: "${teamId}"`,
+    ];
+    if (estimate !== undefined) inputParts.push(`estimate: ${estimate}`);
+
+    const mutation = `
+      mutation {
+        issueCreate(input: { ${inputParts.join(", ")} }) {
+          success
+          issue { id identifier }
+        }
+      }
+    `;
+
+    const response = await this.graphql<{
+      data: { issueCreate: { success: boolean; issue: { id: string; identifier: string } } };
+    }>(mutation);
+
+    return response.data.issueCreate.issue.id;
+  }
+
   /** Attach a PR URL to a ticket via comment. */
   async attachPR(issueId: string, prUrl: string): Promise<void> {
     await this.addComment(
       issueId,
       `Pull request created by Foreman agent: ${prUrl}`
     );
+  }
+
+  private async resolveTeamId(): Promise<string> {
+    const query = `
+      query {
+        teams(filter: { key: { eq: "${this.config.team}" } }) {
+          nodes { id }
+        }
+      }
+    `;
+    const response = await this.graphql<{
+      data: { teams: { nodes: Array<{ id: string }> } };
+    }>(query);
+
+    const team = response.data.teams.nodes[0];
+    if (!team) throw new Error(`Team not found: ${this.config.team}`);
+    return team.id;
   }
 
   private async resolveStateId(name: string): Promise<string | null> {
@@ -154,14 +203,17 @@ export class LinearClient {
     return this.stateCache.get(name) ?? null;
   }
 
-  private async graphql<T = unknown>(query: string): Promise<T> {
+  private async graphql<T = unknown>(query: string, variables?: Record<string, unknown>): Promise<T> {
+    const body: Record<string, unknown> = { query };
+    if (variables) body.variables = variables;
+
     const response = await fetch(this.baseUrl, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Authorization: this.apiKey,
       },
-      body: JSON.stringify({ query }),
+      body: JSON.stringify(body),
     });
 
     if (!response.ok) {

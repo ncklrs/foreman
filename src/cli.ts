@@ -7,7 +7,7 @@
 
 import { loadConfig } from "./config/loader.js";
 import { Orchestrator } from "./orchestrator.js";
-import type { ForemanEvent, AgentSession, PolicyEvaluation } from "./types/index.js";
+import type { ForemanConfig, ForemanEvent, AgentSession, PolicyEvaluation } from "./types/index.js";
 
 interface CliArgs {
   config?: string;
@@ -17,6 +17,8 @@ interface CliArgs {
   workingDir?: string;
   noTui?: boolean;
   watch?: boolean;
+  autopilot?: boolean;
+  autopilotOnce?: boolean;
   help?: boolean;
 }
 
@@ -54,6 +56,12 @@ function parseArgs(argv: string[]): CliArgs {
       case "-w":
         args.watch = true;
         break;
+      case "--autopilot":
+        args.autopilot = true;
+        break;
+      case "--autopilot-once":
+        args.autopilotOnce = true;
+        break;
       case "--help":
       case "-h":
         args.help = true;
@@ -86,12 +94,16 @@ OPTIONS
       --dir <path>           Working directory for the agent
       --no-tui               Run without the terminal UI
   -w, --watch                Watch Linear for new tasks
+      --autopilot            Start autopilot mode (cron-scheduled self-managing)
+      --autopilot-once       Run one autopilot scan immediately, then exit
   -h, --help                 Show this help message
 
 EXAMPLES
   foreman "Fix the login bug"
   foreman --task "Add dark mode" --model architect
   foreman --watch
+  foreman --autopilot
+  foreman --autopilot-once --no-tui
   foreman --config ./custom-foreman.toml --watch
 
 CONFIGURATION
@@ -111,7 +123,7 @@ async function main(): Promise<void> {
   }
 
   // Load config
-  let config;
+  let config: ForemanConfig;
   try {
     config = await loadConfig(args.config);
   } catch (error) {
@@ -179,14 +191,52 @@ async function main(): Promise<void> {
     });
   }
 
-  // Watch mode
-  if (args.watch) {
-    orchestrator.start();
-    console.log("Watching for tasks...");
+  // Autopilot event logging in --no-tui mode
+  if (args.noTui && (args.autopilot || args.autopilotOnce)) {
+    orchestrator.getEventBus().onAny((event) => {
+      switch (event.type) {
+        case "autopilot:run_started":
+          console.log(`\n[autopilot] Run started: ${event.run.id}`);
+          break;
+        case "autopilot:scan_complete":
+          console.log(`[autopilot] Scan complete: ${event.findingsCount} findings`);
+          break;
+        case "autopilot:ticket_created":
+          console.log(`[autopilot] Ticket created: ${event.ticketId} — ${event.finding.title}`);
+          break;
+        case "autopilot:resolve_started":
+          console.log(`[autopilot] Resolving: ${event.finding.title}`);
+          break;
+        case "autopilot:run_completed":
+          console.log(`[autopilot] Run completed: ${event.run.ticketsCreated.length} tickets, ${event.run.ticketsResolved.length} resolved`);
+          break;
+      }
+    });
   }
 
-  // If we have a task but not watching, wait for completion
-  if (args.task && !args.watch) {
+  // Autopilot-once: run a single scan and exit
+  if (args.autopilotOnce) {
+    const engine = orchestrator.getAutopilotEngine();
+    if (!engine) {
+      console.error("Error: autopilot is not configured. Add [autopilot] section to foreman.toml.");
+      process.exit(1);
+    }
+    orchestrator.start();
+    const run = await engine.triggerRun();
+    await orchestrator.stop();
+    console.log(`\nAutopilot run ${run.status}: ${run.findings.length} findings, ${run.ticketsCreated.length} tickets created`);
+    process.exit(run.status === "failed" ? 1 : 0);
+  }
+
+  // Watch mode (includes autopilot if --autopilot is set)
+  if (args.watch || args.autopilot) {
+    orchestrator.start();
+    if (args.watch) console.log("Watching for tasks...");
+    if (args.autopilot) console.log(`Autopilot active (schedule: ${config.autopilot?.schedule ?? "not configured"})`);
+  }
+
+  // If we have a task but not watching/autopiloting, wait for completion
+  if (args.task && !args.watch && !args.autopilot) {
     orchestrator.start();
 
     // Wait for all tasks to complete
@@ -255,7 +305,7 @@ async function startTUI(orchestrator: Orchestrator): Promise<void> {
   });
 }
 
-function getDefaultConfig() {
+function getDefaultConfig(): ForemanConfig {
   return {
     foreman: {
       name: "foreman",
