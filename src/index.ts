@@ -28,6 +28,7 @@ export type {
   AutopilotScanner,
   ReviewFinding,
   AutopilotRun,
+  ApiConfig,
 } from "./types/index.js";
 
 // Provider layer
@@ -99,6 +100,11 @@ export type { Skill } from "./skills/registry.js";
 
 // Prompt enrichment
 export type { PromptEnrichment } from "./runtime/prompt.js";
+
+// API
+export { ApiServer } from "./api/server.js";
+export { WebSocketServer } from "./api/websocket.js";
+export { RateLimiter } from "./api/middleware.js";
 
 // Orchestrator
 export { Orchestrator } from "./orchestrator.js";

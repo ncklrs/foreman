@@ -5,7 +5,7 @@
 import { readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
-import type { AutopilotConfig, AutopilotScanner, ForemanConfig, GitHubIntegrationConfig, ModelConfig, PolicyConfig, RoutingConfig, SandboxConfig, SlackIntegrationConfig } from "../types/index.js";
+import type { ApiConfig, AutopilotConfig, AutopilotScanner, ForemanConfig, GitHubIntegrationConfig, ModelConfig, PolicyConfig, RoutingConfig, SandboxConfig, SlackIntegrationConfig } from "../types/index.js";
 
 // We parse TOML manually to avoid runtime dependency issues.
 // For a production build we'd use @iarna/toml, but this parser handles
@@ -46,6 +46,7 @@ function normalizeConfig(raw: Record<string, unknown>): ForemanConfig {
   const github = raw.github as Record<string, unknown> | undefined;
   const slack = raw.slack as Record<string, unknown> | undefined;
   const autopilot = raw.autopilot as Record<string, unknown> | undefined;
+  const api = raw.api as Record<string, unknown> | undefined;
   const models = raw.models as Record<string, Record<string, unknown>> | undefined;
   const routing = raw.routing as Record<string, unknown> | undefined;
   const sandbox = raw.sandbox as Record<string, unknown> | undefined;
@@ -68,6 +69,7 @@ function normalizeConfig(raw: Record<string, unknown>): ForemanConfig {
     github: normalizeGitHub(github),
     slack: normalizeSlack(slack),
     autopilot: normalizeAutopilot(autopilot),
+    api: normalizeApi(api),
     models: normalizeModels(models ?? {}),
     routing: normalizeRouting(routing),
     sandbox: normalizeSandbox(sandbox),
@@ -167,6 +169,17 @@ function normalizeAutopilot(raw?: Record<string, unknown>): AutopilotConfig | un
     ticketLabels: (raw.ticket_labels as string[]) ?? ["autopilot"],
     branchPrefix: String(raw.branch_prefix ?? "autopilot/"),
     workingDir: raw.working_dir ? String(raw.working_dir) : undefined,
+  };
+}
+
+function normalizeApi(raw?: Record<string, unknown>): ApiConfig | undefined {
+  if (!raw) return undefined;
+  return {
+    enabled: raw.enabled !== false,
+    port: Number(raw.port ?? 4820),
+    host: String(raw.host ?? "127.0.0.1"),
+    apiKey: raw.api_key ? resolveValue(String(raw.api_key)) : undefined,
+    corsOrigins: (raw.cors_origins as string[]) ?? ["*"],
   };
 }
 

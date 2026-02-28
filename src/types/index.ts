@@ -96,12 +96,26 @@ export interface StreamEvent {
 
 // ─── Configuration Types ──────────────────────────────────────────
 
+export interface ApiConfig {
+  /** Whether to enable the HTTP API server. */
+  enabled: boolean;
+  /** Port to listen on. Default: 4820. */
+  port: number;
+  /** Host to bind to. Default: "127.0.0.1". */
+  host: string;
+  /** API key for authentication. If not set, auth is disabled. */
+  apiKey?: string;
+  /** Allowed CORS origins. Default: ["*"]. */
+  corsOrigins: string[];
+}
+
 export interface ForemanConfig {
   foreman: ForemanGlobalConfig;
   linear?: LinearConfig;
   github?: GitHubIntegrationConfig;
   slack?: SlackIntegrationConfig;
   autopilot?: AutopilotConfig;
+  api?: ApiConfig;
   models: Record<string, ModelConfig>;
   routing: RoutingConfig;
   sandbox: SandboxConfig;

@@ -7,6 +7,7 @@
 
 import { loadConfig } from "./config/loader.js";
 import { Orchestrator } from "./orchestrator.js";
+import { ApiServer } from "./api/server.js";
 import type { ForemanConfig, ForemanEvent, AgentSession, PolicyEvaluation } from "./types/index.js";
 
 interface CliArgs {
@@ -19,6 +20,8 @@ interface CliArgs {
   watch?: boolean;
   autopilot?: boolean;
   autopilotOnce?: boolean;
+  api?: boolean;
+  apiPort?: number;
   help?: boolean;
 }
 
@@ -62,6 +65,12 @@ function parseArgs(argv: string[]): CliArgs {
       case "--autopilot-once":
         args.autopilotOnce = true;
         break;
+      case "--api":
+        args.api = true;
+        break;
+      case "--api-port":
+        args.apiPort = parseInt(argv[++i]);
+        break;
       case "--help":
       case "-h":
         args.help = true;
@@ -96,6 +105,8 @@ OPTIONS
   -w, --watch                Watch Linear for new tasks
       --autopilot            Start autopilot mode (cron-scheduled self-managing)
       --autopilot-once       Run one autopilot scan immediately, then exit
+      --api                  Enable HTTP API server
+      --api-port <port>      API server port (default: 4820)
   -h, --help                 Show this help message
 
 EXAMPLES
@@ -145,6 +156,7 @@ async function main(): Promise<void> {
   // Handle shutdown
   const shutdown = async () => {
     console.log("\nShutting down...");
+    if (apiServer) await apiServer.stop();
     await orchestrator.stop();
     process.exit(0);
   };
@@ -154,6 +166,23 @@ async function main(): Promise<void> {
 
   // Initialize
   await orchestrator.initialize();
+
+  // Start API server if configured or --api flag
+  let apiServer: ApiServer | null = null;
+  if (args.api || config.api?.enabled) {
+    const apiConfig = {
+      port: args.apiPort ?? config.api?.port ?? 4820,
+      host: config.api?.host ?? "127.0.0.1",
+      apiKey: config.api?.apiKey,
+      corsOrigins: config.api?.corsOrigins ?? ["*"],
+    };
+    apiServer = new ApiServer({
+      orchestrator,
+      config: apiConfig,
+      logger: orchestrator.getLogger(),
+    });
+    await apiServer.start();
+  }
 
   if (args.noTui) {
     // Non-TUI mode: just log events
