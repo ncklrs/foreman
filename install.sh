@@ -2,10 +2,9 @@
 # Foreman installer — download and install a pre-built release.
 #
 # Usage:
-#   GITHUB_TOKEN=ghp_xxx curl -fsSL https://raw.githubusercontent.com/ncklrs/foreman/main/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/ncklrs/foreman/main/install.sh | sh
 #
 # Environment variables:
-#   GITHUB_TOKEN        (required) GitHub token for private repo access
 #   FOREMAN_VERSION     (optional) Specific version to install, e.g. "0.1.0"
 #   FOREMAN_INSTALL_DIR (optional) Install directory (default: ~/.foreman)
 
@@ -53,14 +52,6 @@ if [ "$NODE_MAJOR" -lt 20 ] 2>/dev/null; then
 fi
 info "Node.js v${NODE_VERSION} detected"
 
-# Check GitHub token
-if [ -z "${GITHUB_TOKEN:-}" ]; then
-  error "GITHUB_TOKEN is required for private repo access.
-  Export it before running:
-    export GITHUB_TOKEN=ghp_xxx
-    curl -fsSL https://raw.githubusercontent.com/${REPO}/main/install.sh | sh"
-fi
-
 # --- Resolve version ---
 
 if [ -n "${FOREMAN_VERSION:-}" ]; then
@@ -69,10 +60,9 @@ if [ -n "${FOREMAN_VERSION:-}" ]; then
 else
   info "Fetching latest version..."
   LATEST_JSON=$(curl -fsSL \
-    -H "Authorization: token ${GITHUB_TOKEN}" \
     -H "Accept: application/vnd.github.v3+json" \
     "${GITHUB_API}/repos/${REPO}/releases/latest" 2>/dev/null) \
-    || error "Failed to fetch latest release. Check your GITHUB_TOKEN permissions."
+    || error "Failed to fetch latest release from GitHub."
 
   # Extract tag_name (e.g., "v0.1.0") — strip leading "v"
   VERSION=$(printf '%s' "$LATEST_JSON" | grep -o '"tag_name":[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"v\{0,1\}\([^"]*\)".*/\1/')
@@ -89,7 +79,6 @@ ASSET_NAME="foreman-v${VERSION}.tar.gz"
 
 info "Finding release asset..."
 RELEASE_JSON=$(curl -fsSL \
-  -H "Authorization: token ${GITHUB_TOKEN}" \
   -H "Accept: application/vnd.github.v3+json" \
   "${GITHUB_API}/repos/${REPO}/releases/tags/v${VERSION}" 2>/dev/null) \
   || error "Release v${VERSION} not found. Check that the version exists."
@@ -116,7 +105,6 @@ TMP_DIR=$(mktemp -d)
 trap 'rm -rf "$TMP_DIR"' EXIT
 
 curl -fsSL \
-  -H "Authorization: token ${GITHUB_TOKEN}" \
   -H "Accept: application/octet-stream" \
   "$ASSET_URL" \
   -o "$TMP_DIR/$ASSET_NAME" \
