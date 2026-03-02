@@ -74,29 +74,7 @@ else
 fi
 
 ASSET_NAME="foreman-v${VERSION}.tar.gz"
-
-# --- Find release asset download URL ---
-
-info "Finding release asset..."
-RELEASE_JSON=$(curl -fsSL \
-  -H "Accept: application/vnd.github.v3+json" \
-  "${GITHUB_API}/repos/${REPO}/releases/tags/v${VERSION}" 2>/dev/null) \
-  || error "Release v${VERSION} not found. Check that the version exists."
-
-# Extract the asset URL for the tarball
-ASSET_URL=$(printf '%s' "$RELEASE_JSON" | grep -o "\"url\":[[:space:]]*\"${GITHUB_API}/repos/${REPO}/releases/assets/[0-9]*\"" | head -1 | sed 's/"url":[[:space:]]*"\(.*\)"/\1/')
-
-# If grep-based extraction fails, try a simpler approach: find asset ID by name
-if [ -z "$ASSET_URL" ]; then
-  ASSET_ID=$(printf '%s' "$RELEASE_JSON" | grep -B5 "\"name\":.*${ASSET_NAME}" | grep '"id"' | head -1 | sed 's/.*"id":[[:space:]]*\([0-9]*\).*/\1/')
-  if [ -n "$ASSET_ID" ]; then
-    ASSET_URL="${GITHUB_API}/repos/${REPO}/releases/assets/${ASSET_ID}"
-  fi
-fi
-
-if [ -z "$ASSET_URL" ]; then
-  error "Could not find asset ${ASSET_NAME} in release v${VERSION}"
-fi
+DOWNLOAD_URL="https://github.com/${REPO}/releases/download/v${VERSION}/${ASSET_NAME}"
 
 # --- Download + extract ---
 
@@ -105,10 +83,9 @@ TMP_DIR=$(mktemp -d)
 trap 'rm -rf "$TMP_DIR"' EXIT
 
 curl -fsSL \
-  -H "Accept: application/octet-stream" \
-  "$ASSET_URL" \
+  "$DOWNLOAD_URL" \
   -o "$TMP_DIR/$ASSET_NAME" \
-  || error "Failed to download release asset"
+  || error "Failed to download ${DOWNLOAD_URL}"
 
 info "Extracting to ${INSTALL_DIR}..."
 
