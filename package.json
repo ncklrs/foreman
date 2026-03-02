@@ -9,11 +9,14 @@
   },
   "scripts": {
     "build": "tsc",
+    "build:release": "./scripts/build-release.sh",
     "dev": "tsc --watch",
     "start": "node dist/cli.js",
     "lint": "eslint src/",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "version": "npm run build",
+    "postversion": "git push && git push --tags"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",

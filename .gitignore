@@ -28,3 +28,8 @@ coverage/
 # Runtime
 tmp/
 .cache/
+
+# Release artifacts
+foreman-v*.tar.gz
+checksums.txt
+.release-staging/
