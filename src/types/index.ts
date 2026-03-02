@@ -115,6 +115,7 @@ export interface ForemanConfig {
   github?: GitHubIntegrationConfig;
   slack?: SlackIntegrationConfig;
   autopilot?: AutopilotConfig;
+  schedules?: ScheduledTaskConfig[];
   api?: ApiConfig;
   models: Record<string, ModelConfig>;
   routing: RoutingConfig;
@@ -262,6 +263,20 @@ export interface RoutingDecision {
   fallbacksAvailable: string[];
 }
 
+// ─── Scheduled Task Types ─────────────────────────────────────────
+
+export interface ScheduledTaskConfig {
+  id: string;
+  description: string;
+  schedule: string;
+  timezone?: string;
+  enabled?: boolean;
+  prompt: string;
+  model?: string;
+  branch?: string;
+  labels?: string[];
+}
+
 // ─── Autopilot Types ──────────────────────────────────────────────
 
 export interface AutopilotConfig {
@@ -348,4 +363,8 @@ export type ForemanEvent =
   | { type: "autopilot:ticket_created"; run: AutopilotRun; finding: ReviewFinding; ticketId: string }
   | { type: "autopilot:resolve_started"; run: AutopilotRun; finding: ReviewFinding }
   | { type: "autopilot:resolve_completed"; run: AutopilotRun; finding: ReviewFinding; success: boolean }
-  | { type: "autopilot:run_completed"; run: AutopilotRun };
+  | { type: "autopilot:run_completed"; run: AutopilotRun }
+  | { type: "schedule:fired"; scheduleId: string; taskId: string }
+  | { type: "schedule:added"; scheduleId: string }
+  | { type: "schedule:removed"; scheduleId: string }
+  | { type: "schedule:toggled"; scheduleId: string; enabled: boolean };

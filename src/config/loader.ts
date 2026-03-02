@@ -6,7 +6,7 @@ import { readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { z } from "zod";
-import type { ApiConfig, AutopilotConfig, AutopilotScanner, ForemanConfig, GitHubIntegrationConfig, ModelConfig, PolicyConfig, RoutingConfig, SandboxConfig, SlackIntegrationConfig } from "../types/index.js";
+import type { ApiConfig, AutopilotConfig, AutopilotScanner, ForemanConfig, GitHubIntegrationConfig, ModelConfig, PolicyConfig, RoutingConfig, SandboxConfig, ScheduledTaskConfig, SlackIntegrationConfig } from "../types/index.js";
 
 // ─── Zod Schemas for config validation ─────────────────────────
 
@@ -18,6 +18,18 @@ const ModelConfigSchema = z.object({
   temperature: z.number().min(0).max(2).optional(),
   endpoint: z.string().optional(),
   apiKey: z.string().optional(),
+});
+
+const ScheduledTaskConfigSchema = z.object({
+  id: z.string(),
+  description: z.string(),
+  schedule: z.string(),
+  timezone: z.string().default("UTC"),
+  enabled: z.boolean().default(true),
+  prompt: z.string(),
+  model: z.string().optional(),
+  branch: z.string().optional(),
+  labels: z.array(z.string()).optional(),
 });
 
 const ForemanConfigSchema = z.object({
@@ -87,6 +99,7 @@ const ForemanConfigSchema = z.object({
     branchPrefix: z.string(),
     workingDir: z.string().optional(),
   }).optional(),
+  schedules: z.array(ScheduledTaskConfigSchema).optional(),
   api: z.object({
     enabled: z.boolean(),
     port: z.number().int().min(1).max(65535),
@@ -148,6 +161,7 @@ function normalizeConfig(raw: Record<string, unknown>): ForemanConfig {
   const github = raw.github as Record<string, unknown> | undefined;
   const slack = raw.slack as Record<string, unknown> | undefined;
   const autopilot = raw.autopilot as Record<string, unknown> | undefined;
+  const schedules = raw.schedules as unknown[] | undefined;
   const api = raw.api as Record<string, unknown> | undefined;
   const models = raw.models as Record<string, Record<string, unknown>> | undefined;
   const routing = raw.routing as Record<string, unknown> | undefined;
@@ -172,6 +186,7 @@ function normalizeConfig(raw: Record<string, unknown>): ForemanConfig {
     github: normalizeGitHub(github),
     slack: normalizeSlack(slack),
     autopilot: normalizeAutopilot(autopilot),
+    schedules: normalizeSchedules(schedules),
     api: normalizeApi(api),
     models: normalizeModels(models ?? {}),
     routing: normalizeRouting(routing),
@@ -286,6 +301,24 @@ function normalizeApi(raw?: Record<string, unknown>): ApiConfig | undefined {
   };
 }
 
+function normalizeSchedules(raw?: unknown[]): ScheduledTaskConfig[] | undefined {
+  if (!raw || !Array.isArray(raw)) return undefined;
+  return raw.map((item) => {
+    const r = item as Record<string, unknown>;
+    return {
+      id: String(r.id ?? ""),
+      description: String(r.description ?? ""),
+      schedule: String(r.schedule ?? ""),
+      timezone: r.timezone ? String(r.timezone) : "UTC",
+      enabled: r.enabled !== false,
+      prompt: String(r.prompt ?? ""),
+      model: r.model ? String(r.model) : undefined,
+      branch: r.branch ? String(r.branch) : undefined,
+      labels: r.labels ? (r.labels as string[]) : undefined,
+    };
+  });
+}
+
 function normalizePolicy(raw?: Record<string, unknown>): PolicyConfig {
   return {
     protectedPaths: (raw?.protected_paths as string[]) ?? [],
@@ -327,6 +360,23 @@ export function parseTOML(input: string): Record<string, unknown> {
 
     // Skip empty lines and comments
     if (!line || line.startsWith("#")) continue;
+
+    // Array-of-tables header [[tableName]]
+    const arrayTableMatch = line.match(/^\[\[([^\]]+)\]\]$/);
+    if (arrayTableMatch) {
+      const path = arrayTableMatch[1].split(".").map((s) => s.trim());
+      const parentPath = path.slice(0, -1);
+      const arrayKey = path[path.length - 1];
+      const parent = parentPath.length > 0 ? ensurePath(result, parentPath) : result;
+      if (!Array.isArray(parent[arrayKey])) {
+        parent[arrayKey] = [];
+      }
+      const newObj: Record<string, unknown> = {};
+      (parent[arrayKey] as Record<string, unknown>[]).push(newObj);
+      currentPath = path;
+      currentTable = newObj;
+      continue;
+    }
 
     // Table header
     const tableMatch = line.match(/^\[([^\]]+)\]$/);

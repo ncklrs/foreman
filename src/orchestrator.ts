@@ -33,6 +33,7 @@ import { SlackWatcher, SlackClient } from "./integrations/slack.js";
 import { SessionStore } from "./storage/sessions.js";
 import { PerformanceTracker } from "./router/performance.js";
 import { AutopilotEngine } from "./autopilot/engine.js";
+import { CronScheduleManager } from "./scheduling/manager.js";
 import { KnowledgeStore } from "./learning/knowledge.js";
 import { AgentsMdManager } from "./learning/agents-md.js";
 import { SkillsRegistry } from "./skills/registry.js";
@@ -67,6 +68,7 @@ export class Orchestrator {
   private slackWatcher: SlackWatcher | null = null;
   private slackClient: SlackClient | null = null;
   private autopilotEngine: AutopilotEngine | null = null;
+  private scheduleManager?: CronScheduleManager;
   private knowledgeStore: KnowledgeStore;
   private agentsMdManager: AgentsMdManager | null = null;
   private skillsRegistry: SkillsRegistry;
@@ -175,6 +177,21 @@ export class Orchestrator {
       });
     }
 
+    if (this.config.schedules?.length) {
+      const { AutopilotScheduler } = await import("./autopilot/scheduler.js");
+      const scheduler = new AutopilotScheduler();
+      this.scheduleManager = new CronScheduleManager({
+        scheduler,
+        eventBus: this.eventBus,
+        logger: this.logger,
+        onEnqueueTask: (task) => this.enqueueTask(task, "schedule"),
+      });
+      this.scheduleManager.loadFromConfig(this.config.schedules);
+      this.logger.info("Schedule manager configured", {
+        schedules: this.config.schedules.length,
+      });
+    }
+
     const restored = await this.sessionStore.loadAll();
     if (restored.length > 0) {
       this.logger.info(`Restored ${restored.length} session(s) from disk`);
@@ -192,6 +209,7 @@ export class Orchestrator {
     this.githubWatcher?.start();
     this.slackWatcher?.start();
     this.autopilotEngine?.start();
+    this.scheduleManager?.start();
 
     this.healthCheckInterval = setInterval(async () => {
       this.providerHealth = await this.registry.healthCheckAll();
@@ -212,6 +230,7 @@ export class Orchestrator {
     this.githubWatcher?.stop();
     this.slackWatcher?.stop();
     this.autopilotEngine?.stop();
+    this.scheduleManager?.stop();
 
     if (this.healthCheckInterval) {
       clearInterval(this.healthCheckInterval);
@@ -251,6 +270,7 @@ export class Orchestrator {
   getPerformanceStats() { return this.performanceTracker.getStats(); }
   getLogger(): Logger { return this.logger; }
   getAutopilotEngine(): AutopilotEngine | null { return this.autopilotEngine; }
+  getScheduleManager(): CronScheduleManager | undefined { return this.scheduleManager; }
   getKnowledgeStore(): KnowledgeStore { return this.knowledgeStore; }
   getSkillsRegistry(): SkillsRegistry { return this.skillsRegistry; }
 

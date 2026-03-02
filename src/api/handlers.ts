@@ -11,6 +11,14 @@ import type { HookPayload } from "../hooks/types.js";
 import { pathToEvent } from "../hooks/config.js";
 import { generateId } from "../utils/id.js";
 
+/** Basic cron expression validation (5 or 6 space-separated fields). */
+function isValidCronExpression(expr: string): boolean {
+  const fields = expr.trim().split(/\s+/);
+  if (fields.length < 5 || fields.length > 6) return false;
+  const cronFieldPattern = /^[\d*,\-/]+$/;
+  return fields.every((f) => cronFieldPattern.test(f));
+}
+
 /** Compute session status counts from a list of sessions. */
 function getSessionCounts(sessions: Array<{ status: string }>) {
   let completed = 0;
@@ -316,6 +324,98 @@ export function buildHandlers(orchestrator: Orchestrator, logger: Logger): Handl
           },
         },
       };
+    },
+
+    // ── Schedules ─────────────────────────────────────────────
+    "GET /api/schedules": () => {
+      const manager = orchestrator.getScheduleManager();
+      if (!manager) {
+        return { status: 200, body: { schedules: [], message: "No schedule manager configured" } };
+      }
+      return { status: 200, body: { schedules: manager.getSchedules() } };
+    },
+
+    "POST /api/schedules": ({ body }) => {
+      const data = body as Record<string, unknown> | undefined;
+      if (!data?.id || !data?.description || !data?.schedule || !data?.prompt) {
+        return {
+          status: 400,
+          body: { error: "Missing required fields: id, description, schedule, prompt" },
+        };
+      }
+
+      if (!isValidCronExpression(String(data.schedule))) {
+        return {
+          status: 400,
+          body: { error: "Invalid cron expression", schedule: String(data.schedule) },
+        };
+      }
+
+      const manager = orchestrator.getScheduleManager();
+      if (!manager) {
+        return { status: 400, body: { error: "Schedule manager not configured" } };
+      }
+
+      const existing = manager.getSchedules().find((s) => s.id === String(data.id));
+      if (existing) {
+        return { status: 409, body: { error: `Schedule "${data.id}" already exists` } };
+      }
+
+      const config = {
+        id: String(data.id),
+        description: String(data.description),
+        schedule: String(data.schedule),
+        prompt: String(data.prompt),
+        timezone: data.timezone ? String(data.timezone) : undefined,
+        enabled: data.enabled !== false,
+        model: data.model ? String(data.model) : undefined,
+        branch: data.branch ? String(data.branch) : undefined,
+        labels: Array.isArray(data.labels) ? data.labels.map(String) : undefined,
+      };
+
+      manager.addSchedule(config);
+      logger.info(`Schedule created via API: ${config.id}`, { schedule: config.schedule });
+
+      return { status: 201, body: { id: config.id, message: "Schedule created" } };
+    },
+
+    "DELETE /api/schedules/:id": ({ params }) => {
+      const manager = orchestrator.getScheduleManager();
+      if (!manager) {
+        return { status: 400, body: { error: "Schedule manager not configured" } };
+      }
+
+      const existing = manager.getSchedules().find((s) => s.id === params.id);
+      if (!existing) {
+        return { status: 404, body: { error: "Schedule not found", id: params.id } };
+      }
+
+      manager.removeSchedule(params.id);
+      logger.info(`Schedule removed via API: ${params.id}`);
+
+      return { status: 200, body: { message: "Schedule removed", id: params.id } };
+    },
+
+    "PATCH /api/schedules/:id": ({ params, body }) => {
+      const manager = orchestrator.getScheduleManager();
+      if (!manager) {
+        return { status: 400, body: { error: "Schedule manager not configured" } };
+      }
+
+      const data = body as Record<string, unknown> | undefined;
+      if (!data || typeof data.enabled !== "boolean") {
+        return { status: 400, body: { error: "Missing required field: enabled (boolean)" } };
+      }
+
+      const existing = manager.getSchedules().find((s) => s.id === params.id);
+      if (!existing) {
+        return { status: 404, body: { error: "Schedule not found", id: params.id } };
+      }
+
+      manager.setEnabled(params.id, data.enabled);
+      logger.info(`Schedule ${data.enabled ? "enabled" : "disabled"} via API: ${params.id}`);
+
+      return { status: 200, body: { id: params.id, enabled: data.enabled, message: "Schedule updated" } };
     },
 
     // ── Config (read-only) ──────────────────────────────────
