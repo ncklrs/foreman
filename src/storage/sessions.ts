@@ -3,8 +3,7 @@
  * Saves and loads agent sessions to/from disk for recovery on restart.
  */
 
-import { readFile, writeFile, readdir, mkdir, unlink } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { readFile, writeFile, readdir, mkdir, unlink, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import type { AgentSession } from "../types/index.js";
@@ -69,24 +68,34 @@ export class SessionStore {
     }
   }
 
-  /** Prune old completed/failed sessions (keep last N). */
+  /** Prune old sessions (keep last N by file modification time). */
   async prune(keepLast = 50): Promise<number> {
-    const sessions = await this.loadAll();
+    await this.ensureDir();
+    try {
+      const files = await readdir(this.dir);
+      const jsonFiles = files.filter((f) => f.endsWith(".json"));
+      if (jsonFiles.length <= keepLast) return 0;
 
-    const terminal = sessions
-      .filter((s) => s.status === "completed" || s.status === "failed")
-      .sort((a, b) => {
-        const aTime = a.completedAt ? new Date(a.completedAt).getTime() : 0;
-        const bTime = b.completedAt ? new Date(b.completedAt).getTime() : 0;
-        return bTime - aTime; // newest first
-      });
+      // Use file modification time instead of loading full JSON
+      const fileStats = await Promise.all(
+        jsonFiles.map(async (f) => {
+          const path = join(this.dir, f);
+          const s = await stat(path);
+          return { file: f, path, mtime: s.mtimeMs };
+        })
+      );
 
-    const toDelete = terminal.slice(keepLast);
-    for (const session of toDelete) {
-      await this.delete(session.id);
+      // Sort newest first, delete excess
+      fileStats.sort((a, b) => b.mtime - a.mtime);
+      const toDelete = fileStats.slice(keepLast);
+      for (const entry of toDelete) {
+        await unlink(entry.path).catch(() => {});
+      }
+
+      return toDelete.length;
+    } catch {
+      return 0;
     }
-
-    return toDelete.length;
   }
 
   private sessionPath(id: string): string {
@@ -96,9 +105,7 @@ export class SessionStore {
   }
 
   private async ensureDir(): Promise<void> {
-    if (!existsSync(this.dir)) {
-      await mkdir(this.dir, { recursive: true });
-    }
+    await mkdir(this.dir, { recursive: true });
   }
 
   private deserialize(data: string): AgentSession | null {

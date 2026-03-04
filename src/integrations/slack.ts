@@ -223,6 +223,10 @@ export class SlackWatcher {
           this.callback(task);
         }
       }
+      // Prevent unbounded Set growth — time-based filtering handles dedup
+      if (this.seenMessages.size > 10_000) {
+        this.seenMessages.clear();
+      }
     } catch (error) {
       console.error(
         "Slack poll error:",

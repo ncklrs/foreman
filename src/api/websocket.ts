@@ -9,6 +9,7 @@ import type { IncomingMessage } from "node:http";
 import type { Duplex } from "node:stream";
 import type { ForemanEvent } from "../types/index.js";
 import type { Logger } from "../logging/logger.js";
+import { generateId } from "../utils/id.js";
 
 const WS_MAGIC = "258EAFA5-E914-47DA-95CA-5AB5-11D85B9A";
 
@@ -50,7 +51,7 @@ export class WebSocketServer {
       "\r\n"
     );
 
-    const clientId = `ws_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    const clientId = generateId("ws");
 
     // Check for event filter from query params
     const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);

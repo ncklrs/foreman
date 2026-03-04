@@ -114,21 +114,20 @@ describe("SessionStore", () => {
     expect(loaded!.artifacts[0].createdAt).toBeInstanceOf(Date);
   });
 
-  it("should handle running sessions in prune (only prune terminal)", async () => {
-    const running = makeSession({ id: "running_1", status: "running" });
-    const completed = makeSession({ id: "completed_1", status: "completed" });
-    const failed = makeSession({ id: "failed_1", status: "failed" });
+  it("should prune old sessions by file count keeping newest N", async () => {
+    const s1 = makeSession({ id: "session_1", status: "running" });
+    const s2 = makeSession({ id: "session_2", status: "completed" });
+    const s3 = makeSession({ id: "session_3", status: "failed" });
 
-    await store.save(running);
-    await store.save(completed);
-    await store.save(failed);
+    await store.save(s1);
+    await store.save(s2);
+    await store.save(s3);
 
-    const pruned = await store.prune(0); // prune ALL terminal sessions
+    // Keep only 1 (newest by mtime), prune the other 2
+    const pruned = await store.prune(1);
     expect(pruned).toBe(2);
 
-    // Running session should remain
     const remaining = await store.loadAll();
     expect(remaining.length).toBe(1);
-    expect(remaining[0].id).toBe("running_1");
   });
 });

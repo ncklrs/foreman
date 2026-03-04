@@ -206,22 +206,10 @@ export class TaskGraph {
    * Returns null if graph has cycles.
    */
   topologicalSort(): SubTask[] | null {
+    // In-degree = number of dependencies for each task
     const inDegree = new Map<string, number>();
     for (const id of this.nodes.keys()) {
-      inDegree.set(id, 0);
-    }
-
-    for (const deps of this.edges.values()) {
-      for (const dep of deps) {
-        if (inDegree.has(dep)) {
-          // This counts reverse — we need dependents' in-degree
-        }
-      }
-    }
-
-    // Recompute in-degree correctly: in-degree = number of dependencies
-    for (const [id, deps] of this.edges) {
-      inDegree.set(id, deps.size);
+      inDegree.set(id, this.edges.get(id)?.size ?? 0);
     }
 
     const queue: string[] = [];

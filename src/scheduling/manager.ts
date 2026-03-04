@@ -9,6 +9,7 @@ import { AutopilotScheduler } from "../autopilot/scheduler.js";
 import { EventBus } from "../events/bus.js";
 import { Logger } from "../logging/logger.js";
 import type { ScheduledTaskConfig, AgentTask } from "../types/index.js";
+import { generateId } from "../utils/id.js";
 
 export interface CronScheduleManagerOptions {
   scheduler: AutopilotScheduler;
@@ -43,7 +44,7 @@ export class CronScheduleManager {
     this.configs.set(config.id, config);
 
     const callback = async () => {
-      const taskId = `sched-${config.id}-${Date.now()}`;
+      const taskId = generateId(`sched_${config.id}`);
       const task: AgentTask = {
         id: taskId,
         title: config.description,

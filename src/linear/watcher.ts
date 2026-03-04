@@ -64,6 +64,10 @@ export class LinearWatcher {
           this.callback(task);
         }
       }
+      // Prevent unbounded Set growth
+      if (this.seenTickets.size > 10_000) {
+        this.seenTickets.clear();
+      }
     } catch (error) {
       console.error(
         "Linear poll error:",

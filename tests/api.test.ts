@@ -482,7 +482,10 @@ describe("ApiServer integration", () => {
     // Add getEventBus mock
     const listeners: Array<(event: unknown) => void> = [];
     (mockOrch as any).getEventBus = () => ({
-      onAny: (fn: (event: unknown) => void) => listeners.push(fn),
+      onAny: (fn: (event: unknown) => void) => {
+        listeners.push(fn);
+        return { unsubscribe: () => {} };
+      },
     });
 
     server = new ApiServer({
@@ -592,7 +595,10 @@ describe("ApiServer with auth", () => {
     mockOrch = createMockOrchestrator();
     const listeners: Array<(event: unknown) => void> = [];
     (mockOrch as any).getEventBus = () => ({
-      onAny: (fn: (event: unknown) => void) => listeners.push(fn),
+      onAny: (fn: (event: unknown) => void) => {
+        listeners.push(fn);
+        return { unsubscribe: () => {} };
+      },
     });
 
     server = new ApiServer({

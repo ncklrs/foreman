@@ -204,6 +204,10 @@ export class GitHubWatcher {
           this.callback(task);
         }
       }
+      // Prevent unbounded Set growth
+      if (this.seenIssues.size > 10_000) {
+        this.seenIssues.clear();
+      }
     } catch (error) {
       console.error(
         "GitHub poll error:",

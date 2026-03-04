@@ -112,10 +112,12 @@ describe("EventBus", () => {
   it("respects max history size", () => {
     const bus = new EventBus(5);
 
-    for (let i = 0; i < 10; i++) {
+    // Emit 11 events to trigger amortized truncation (at 2x = 10 threshold)
+    for (let i = 0; i < 11; i++) {
       bus.emit({ type: "agent:started", session: mockSession });
     }
 
+    // After truncation at 2x, history is trimmed back to maxHistorySize
     expect(bus.getHistory()).toHaveLength(5);
   });
 
