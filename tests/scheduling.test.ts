@@ -142,7 +142,7 @@ describe("CronScheduleManager", () => {
     const fired = firedEvents[0] as Extract<ForemanEvent, { type: "schedule:fired" }>;
     expect(fired.type).toBe("schedule:fired");
     expect(fired.scheduleId).toBe("emit-fire-test");
-    expect(fired.taskId).toMatch(/^sched-emit-fire-test-\d+$/);
+    expect(fired.taskId).toMatch(/^sched_emit-fire-test_\d+_/);
   });
 
   it("adds schedule at runtime and emits schedule:added", () => {
@@ -263,11 +263,11 @@ describe("CronScheduleManager", () => {
 
     expect(onEnqueueTask).toHaveBeenCalled();
     const task: AgentTask = onEnqueueTask.mock.calls[0][0];
-    expect(task.id).toMatch(/^sched-id-format-\d+$/);
+    expect(task.id).toMatch(/^sched_id-format_\d+_/);
 
     // Verify the timestamp portion is a valid number
-    const parts = task.id.split("-");
-    const timestamp = parseInt(parts[parts.length - 1], 10);
+    const parts = task.id.split("_");
+    const timestamp = parseInt(parts[2], 10);
     expect(timestamp).toBeGreaterThan(0);
     expect(timestamp).toBeLessThanOrEqual(Date.now());
   });

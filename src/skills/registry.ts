@@ -14,8 +14,7 @@
  * prompt template and tools are injected into the agent's context.
  */
 
-import { readFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { readFile, readdir } from "node:fs/promises";
 import { resolve, join } from "node:path";
 import type { ToolDefinition } from "../types/index.js";
 
@@ -123,12 +122,14 @@ export class SkillsRegistry {
    */
   async loadFromDirectory(workingDir: string): Promise<number> {
     const skillsDir = join(workingDir, ".foreman", "skills");
-    if (!existsSync(skillsDir)) return 0;
 
     let loaded = 0;
-    // Read directory entries
-    const { readdir } = await import("node:fs/promises");
-    const entries = await readdir(skillsDir);
+    let entries: string[];
+    try {
+      entries = await readdir(skillsDir);
+    } catch {
+      return 0; // Directory doesn't exist
+    }
 
     for (const entry of entries) {
       if (!entry.endsWith(".json")) continue;

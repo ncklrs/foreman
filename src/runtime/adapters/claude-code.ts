@@ -31,6 +31,7 @@ import type {
   TokenUsage,
 } from "../../types/index.js";
 import type { PromptEnrichment } from "../prompt.js";
+import { generateId } from "../../utils/id.js";
 
 export interface ClaudeCodeRunnerOptions {
   task: AgentTask;
@@ -108,7 +109,7 @@ export class ClaudeCodeRunner extends EventEmitter {
     this.onEvent = options.onEvent ?? (() => {});
 
     this.session = {
-      id: `cc_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      id: generateId("cc"),
       task: options.task,
       status: "idle",
       modelName: options.model ?? "claude-sonnet-4-5-20250929",

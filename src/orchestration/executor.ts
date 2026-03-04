@@ -22,6 +22,7 @@ import { AgentLoop } from "../runtime/loop.js";
 import type { EventBus } from "../events/bus.js";
 import type { Logger } from "../logging/logger.js";
 import { TaskGraph, type SubTask } from "./graph.js";
+import { extractFilesChanged, extractSessionSummary } from "../utils/session.js";
 
 export interface ExecutorOptions {
   /** Foreman configuration. */
@@ -249,8 +250,8 @@ export class MultiAgentExecutor {
     try {
       const session = await loop.run();
 
-      const filesChanged = this.extractFilesChanged(session);
-      const summary = this.extractSummary(session);
+      const filesChanged = extractFilesChanged(session);
+      const summary = extractSessionSummary(session, "Subtask completed");
 
       for (const f of filesChanged) allFiles.add(f);
 
@@ -342,54 +343,6 @@ export class MultiAgentExecutor {
     for (const resolve of resolvers) {
       resolve();
     }
-  }
-
-  private extractFilesChanged(session: {
-    messages: Array<{ role: string; content: string | Array<{ type: string; name?: string; input?: Record<string, unknown> }> }>;
-  }): string[] {
-    const files = new Set<string>();
-    for (const msg of session.messages) {
-      if (Array.isArray(msg.content)) {
-        for (const block of msg.content) {
-          if (block.type === "tool_use") {
-            const input = block.input as Record<string, unknown> | undefined;
-            if (
-              (block.name === "write_file" || block.name === "edit_file") &&
-              input?.path
-            ) {
-              files.add(String(input.path));
-            }
-          }
-        }
-      }
-    }
-    return Array.from(files);
-  }
-
-  private extractSummary(session: {
-    messages: Array<{ role: string; content: string | Array<{ type: string; text?: string }> }>;
-    artifacts: Array<{ type: string; content: string }>;
-    error?: string;
-  }): string {
-    const doneArtifact = session.artifacts.find(
-      (a) => a.type === "log" && a.content !== "Task completed"
-    );
-    if (doneArtifact) return doneArtifact.content;
-
-    for (let i = session.messages.length - 1; i >= 0; i--) {
-      const msg = session.messages[i];
-      if (msg.role === "assistant") {
-        if (typeof msg.content === "string") return msg.content.slice(0, 500);
-        if (Array.isArray(msg.content)) {
-          const textBlock = msg.content.find(
-            (b): b is { type: "text"; text: string } => b.type === "text" && !!b.text
-          );
-          if (textBlock) return textBlock.text.slice(0, 500);
-        }
-      }
-    }
-
-    return session.error ?? "Subtask completed";
   }
 
   private buildSummary(graph: TaskGraph, results: Map<string, SubTaskResult>): string {

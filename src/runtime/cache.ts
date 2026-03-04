@@ -7,15 +7,16 @@
 interface CacheEntry {
   result: string;
   timestamp: number;
-  /** Hash of the key arguments that produced this result. */
-  keyHash: string;
 }
 
 export class ToolResultCache {
   private cache: Map<string, CacheEntry> = new Map();
   private modifiedFiles: Set<string> = new Set();
+  /** Reverse index: file path → cache keys that reference it. */
+  private pathToKeys: Map<string, Set<string>> = new Map();
   private hits = 0;
   private misses = 0;
+  private maxEntries = 200;
 
   /** Cache-aware tool result lookup. */
   get(toolName: string, input: Record<string, unknown>): string | null {
@@ -50,21 +51,37 @@ export class ToolResultCache {
     if (!this.isCacheable(toolName)) return;
 
     const key = this.buildKey(toolName, input);
-    this.cache.set(key, {
-      result,
-      timestamp: Date.now(),
-      keyHash: key,
-    });
+
+    // Evict oldest entries if at capacity
+    if (this.cache.size >= this.maxEntries && !this.cache.has(key)) {
+      const oldest = this.cache.keys().next().value;
+      if (oldest) this.cache.delete(oldest);
+    }
+
+    this.cache.set(key, { result, timestamp: Date.now() });
+
+    // Track path → key mapping for efficient invalidation
+    const path = input.path as string | undefined;
+    if (path) {
+      let keys = this.pathToKeys.get(path);
+      if (!keys) {
+        keys = new Set();
+        this.pathToKeys.set(path, keys);
+      }
+      keys.add(key);
+    }
   }
 
   /** Record that a file was modified (invalidates read cache). */
   recordFileModification(path: string): void {
     this.modifiedFiles.add(path);
-    // Also invalidate any cached reads of this file
-    for (const [key, entry] of this.cache.entries()) {
-      if (key.includes(path)) {
+    // Invalidate cache entries for this exact path via reverse index
+    const keys = this.pathToKeys.get(path);
+    if (keys) {
+      for (const key of keys) {
         this.cache.delete(key);
       }
+      this.pathToKeys.delete(path);
     }
   }
 
@@ -107,6 +124,7 @@ export class ToolResultCache {
   clear(): void {
     this.cache.clear();
     this.modifiedFiles.clear();
+    this.pathToKeys.clear();
   }
 
   /** Get cache statistics. */

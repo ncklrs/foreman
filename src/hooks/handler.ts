@@ -144,8 +144,11 @@ export class HookHandler {
   private handlePostToolUse(payload: PostToolUsePayload): HookResponse {
     const { eventBus } = this.deps;
 
-    // Track in session state
+    // Track in session state (cap at 500 entries to bound memory)
     const session = this.getOrCreateSession(payload.session_id);
+    if (session.toolHistory.length >= 500) {
+      session.toolHistory.splice(0, session.toolHistory.length - 400);
+    }
     session.toolHistory.push({
       tool: payload.tool_name,
       input: payload.tool_input,
@@ -206,6 +209,9 @@ export class HookHandler {
         error: payload.stop_reason ?? "Unknown error",
       });
     }
+
+    // Clean up session on stop (prevents leak when session ends without TaskCompleted)
+    this.sessions.delete(payload.session_id);
 
     return { decision: "allow" };
   }

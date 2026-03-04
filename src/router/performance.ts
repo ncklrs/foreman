@@ -38,7 +38,8 @@ export class PerformanceTracker {
     entry.timestamp = entry.timestamp ?? new Date();
     this.records.push(entry);
 
-    if (this.records.length > this.maxRecords) {
+    // Amortize truncation at 2x to reduce GC churn
+    if (this.records.length > this.maxRecords * 2) {
       this.records = this.records.slice(-this.maxRecords);
     }
   }

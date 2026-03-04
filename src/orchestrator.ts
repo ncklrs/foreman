@@ -77,6 +77,7 @@ export class Orchestrator {
   private activeLoops: Map<string, AgentLoop> = new Map();
   private taskQueue: AgentTask[] = [];
   private providerHealth: Map<string, ProviderHealth> = new Map();
+  private runningCount = 0;
   private running = false;
   private approvalHandler: ApprovalHandler | null = null;
   private healthCheckInterval: ReturnType<typeof setInterval> | null = null;
@@ -193,12 +194,16 @@ export class Orchestrator {
     }
 
     const restored = await this.sessionStore.loadAll();
-    if (restored.length > 0) {
-      this.logger.info(`Restored ${restored.length} session(s) from disk`);
-      for (const session of restored) {
+    // Only restore running sessions (others are historical and stay on disk)
+    const active = restored.filter((s) => s.status === "running");
+    if (active.length > 0) {
+      this.logger.info(`Restored ${active.length} active session(s) from disk (${restored.length} total on disk)`);
+      for (const session of active) {
         this.sessions.set(session.id, session);
       }
     }
+    // Auto-prune old sessions on startup
+    await this.sessionStore.prune(50);
 
     this.logger.info("Foreman initialized");
   }
@@ -277,11 +282,7 @@ export class Orchestrator {
   private processQueue(): void {
     if (!this.running) return;
 
-    const activeCount = Array.from(this.sessions.values()).filter(
-      (s) => s.status === "running"
-    ).length;
-
-    const available = this.config.foreman.maxConcurrentAgents - activeCount;
+    const available = this.config.foreman.maxConcurrentAgents - this.runningCount;
 
     for (let i = 0; i < available && this.taskQueue.length > 0; i++) {
       const task = this.taskQueue.shift()!;
@@ -393,6 +394,7 @@ export class Orchestrator {
     const sessionId = runner.getSession().id;
     this.activeLoops.set(sessionId, runner as AgentLoop);
     this.sessions.set(sessionId, runner.getSession());
+    this.runningCount++;
 
     const startTime = Date.now();
 
@@ -430,6 +432,9 @@ export class Orchestrator {
       this.knowledgeStore.learnFromSession(session);
       await this.knowledgeStore.save();
 
+      // Evict completed session from memory (persisted to disk)
+      this.sessions.delete(session.id);
+
       this.logger.info(`Task "${task.title}" ${session.status}`, {
         model: session.modelName,
         iterations: session.iterations,
@@ -439,6 +444,7 @@ export class Orchestrator {
     } catch (error) {
       this.logger.error(`Agent loop error for task ${task.id}`, { error });
     } finally {
+      this.runningCount--;
       this.activeLoops.delete(sessionId);
       this.processQueue();
     }
@@ -545,7 +551,6 @@ export class Orchestrator {
         error: result.success ? undefined : `${stats.failed} subtask(s) failed`,
       };
 
-      this.sessions.set(session.id, session);
       await this.sessionStore.save(session);
       await this.notifyCompletion(task, session);
       this.knowledgeStore.learnFromSession(session);

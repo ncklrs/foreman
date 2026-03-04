@@ -30,6 +30,7 @@ export class ApiServer {
   private config: ApiConfig;
   private logger: Logger;
   private routes: Route[];
+  private eventSubscription: { unsubscribe: () => void } | null = null;
 
   constructor(options: ApiServerOptions) {
     this.orchestrator = options.orchestrator;
@@ -83,7 +84,7 @@ export class ApiServer {
       });
 
       // Subscribe to orchestrator events and broadcast to WebSocket clients
-      this.orchestrator.getEventBus().onAny((event) => {
+      this.eventSubscription = this.orchestrator.getEventBus().onAny((event) => {
         this.wsServer.broadcast(event);
       });
     });
@@ -91,6 +92,8 @@ export class ApiServer {
 
   /** Stop the HTTP server. */
   async stop(): Promise<void> {
+    this.eventSubscription?.unsubscribe();
+    this.eventSubscription = null;
     this.wsServer.closeAll();
 
     return new Promise((resolve) => {

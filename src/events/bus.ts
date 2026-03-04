@@ -87,14 +87,17 @@ export class EventBus {
 
   /** Emit an event to all matching listeners. */
   emit(event: ForemanEvent): void {
-    // Record in history
+    // Record in history (amortize truncation at 2x to reduce GC churn)
     this.history.push(event);
-    if (this.history.length > this.maxHistorySize) {
+    if (this.history.length > this.maxHistorySize * 2) {
       this.history = this.history.slice(-this.maxHistorySize);
     }
 
     if (this.paused) {
-      this.pendingEvents.push(event);
+      // Cap pending events to prevent unbounded growth while paused
+      if (this.pendingEvents.length < this.maxHistorySize) {
+        this.pendingEvents.push(event);
+      }
       return;
     }
 

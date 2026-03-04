@@ -9,7 +9,6 @@
  * - Tool result caching (avoid re-reading unchanged files)
  */
 
-import { EventEmitter } from "node:events";
 import type {
   AgentSession,
   AgentTask,
@@ -58,7 +57,7 @@ interface AgentLoopOptions {
   promptEnrichment?: PromptEnrichment;
 }
 
-export class AgentLoop extends EventEmitter {
+export class AgentLoop {
   private session: AgentSession;
   private provider: ModelProvider;
   private toolExecutor: ToolExecutor;
@@ -76,7 +75,6 @@ export class AgentLoop extends EventEmitter {
   private aborted = false;
 
   constructor(options: AgentLoopOptions) {
-    super();
     this.provider = options.provider;
     this.config = options.config;
     this.workingDir = options.workingDir;

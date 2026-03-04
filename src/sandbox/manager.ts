@@ -10,6 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { exec } from "node:child_process";
 import type { AgentArtifact, SandboxConfig } from "../types/index.js";
+import { generateId } from "../utils/id.js";
 
 export interface Sandbox {
   id: string;
@@ -138,7 +139,7 @@ export class SandboxManager {
   }
 
   private async createSandbox(): Promise<Sandbox> {
-    const id = `sandbox_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    const id = generateId("sandbox");
 
     if (this.config.type === "docker") {
       return this.createDockerSandbox(id);

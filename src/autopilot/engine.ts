@@ -27,6 +27,7 @@ import { LinearClient } from "../linear/client.js";
 import { EventBus } from "../events/bus.js";
 import { Logger } from "../logging/logger.js";
 import type { KnowledgeStore } from "../learning/knowledge.js";
+import { generateId } from "../utils/id.js";
 
 interface AutopilotEngineOptions {
   config: ForemanConfig;
@@ -127,7 +128,7 @@ export class AutopilotEngine {
     }
 
     const run: AutopilotRun = {
-      id: `autopilot_${Date.now()}`,
+      id: generateId("autopilot"),
       startedAt: new Date(),
       status: "scanning",
       findings: [],
@@ -137,6 +138,10 @@ export class AutopilotEngine {
 
     this.activeRun = run;
     this.runs.push(run);
+    // Cap run history to prevent unbounded memory growth
+    if (this.runs.length > 50) {
+      this.runs.splice(0, this.runs.length - 50);
+    }
     this.eventBus.emit({ type: "autopilot:run_started", run });
     this.logger.info("Autopilot run started", { runId: run.id });
 

@@ -78,6 +78,8 @@ function createEmptyKB(): KnowledgeBase {
 export class KnowledgeStore {
   private filePath: string;
   private kb: KnowledgeBase = createEmptyKB();
+  /** In-memory Set for O(1) finding dedup lookups. Synced with kb.seenFindings on load/save. */
+  private seenFindingsSet: Set<string> = new Set();
   private dirty = false;
 
   constructor(dir?: string) {
@@ -93,12 +95,15 @@ export class KnowledgeStore {
     } catch {
       this.kb = createEmptyKB();
     }
+    this.seenFindingsSet = new Set(this.kb.seenFindings);
   }
 
   /** Persist knowledge base to disk. */
   async save(): Promise<void> {
     if (!this.dirty) return;
     this.kb.updatedAt = new Date().toISOString();
+    // Sync Set back to array for serialization
+    this.kb.seenFindings = Array.from(this.seenFindingsSet);
     const dir = this.filePath.replace(/\/[^/]+$/, "");
     await mkdir(dir, { recursive: true });
     await writeFile(this.filePath, JSON.stringify(this.kb, null, 2), "utf-8");
@@ -153,7 +158,7 @@ export class KnowledgeStore {
     for (const finding of findings) {
       const fingerprint = this.fingerprintFinding(finding);
 
-      if (this.kb.seenFindings.includes(fingerprint)) {
+      if (this.seenFindingsSet.has(fingerprint)) {
         // Reinforce existing lesson about this pattern
         const existing = this.kb.lessons.find(
           (l) => l.tags.includes(finding.scanner) && l.summary.includes(finding.title.slice(0, 40))
@@ -165,10 +170,13 @@ export class KnowledgeStore {
           this.dirty = true;
         }
       } else {
-        this.kb.seenFindings.push(fingerprint);
-        // Cap the seen list
-        if (this.kb.seenFindings.length > 500) {
-          this.kb.seenFindings = this.kb.seenFindings.slice(-500);
+        this.seenFindingsSet.add(fingerprint);
+        // Cap the seen set
+        if (this.seenFindingsSet.size > 500) {
+          const iter = this.seenFindingsSet.values();
+          for (let i = 0; i < this.seenFindingsSet.size - 500; i++) {
+            this.seenFindingsSet.delete(iter.next().value!);
+          }
         }
         novel.push(finding);
         this.dirty = true;
@@ -319,7 +327,7 @@ export class KnowledgeStore {
 
   /** Check if a finding has been seen before. */
   isKnownFinding(finding: ReviewFinding): boolean {
-    return this.kb.seenFindings.includes(this.fingerprintFinding(finding));
+    return this.seenFindingsSet.has(this.fingerprintFinding(finding));
   }
 
   /** Get the full knowledge base (for inspection/debugging). */
